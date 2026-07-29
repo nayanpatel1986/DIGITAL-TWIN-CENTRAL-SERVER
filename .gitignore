@@ -1,0 +1,39 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+build/
+.vite/
+.cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker/database runtime data and exported images
+**/docker-images/
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+*.dump
+*.sql.gz
+pgdata/
+postgres-data/
+timescaledb-data/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated offline transfer package
+AHWR_CENTRAL_OFFLINE_PACKAGE/
+
