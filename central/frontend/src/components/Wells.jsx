@@ -13,6 +13,7 @@ import { KpiCard, fmtNum } from './common';
 // Well lifecycle status palette (StatusChip's STATUS_COLOR is rig-liveness oriented and
 // doesn't fit well-status, so we keep a small local map keyed by lifecycle stage).
 const WELL_STATUS_COLOR = {
+    active: '#22c55e',
     planned: '#64748b',
     drilling: '#38bdf8',
     completed: '#22d3ee',
@@ -21,7 +22,7 @@ const WELL_STATUS_COLOR = {
     suspended: '#f97316',
     abandoned: '#ef4444',
 };
-const WELL_STATUSES = ['planned', 'drilling', 'completed', 'producing', 'workover', 'suspended', 'abandoned'];
+const WELL_STATUSES = ['active', 'planned', 'drilling', 'completed', 'producing', 'workover', 'suspended', 'abandoned'];
 const WELL_TYPES = ['production', 'injection', 'exploration', 'appraisal', 'workover'];
 
 function WellStatusChip({ status, size = 'small' }) {
@@ -74,7 +75,7 @@ function WellTile({ well, canAdmin, onOpen, onDelete }) {
             </Stack>
 
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
-                {well.wellType && <Chip size="small" variant="outlined" label={well.wellType} />}
+                {(well.serviceType || well.wellType) && <Chip size="small" variant="outlined" label={well.serviceType || well.wellType} />}
                 <WellStatusChip status={well.status} />
             </Stack>
 

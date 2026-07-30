@@ -45,7 +45,7 @@ const UNIT_BY_NAME = Object.fromEntries(ASSET_UNITS.map((u) => [u[0], u]));
 function unitFor(n) {
     const live = {
         1: 'Ankleshwar', 2: 'Ankleshwar', 3: 'Ankleshwar',
-        4: 'Mumbai High', 5: 'Mumbai High', 6: 'Mumbai High',
+        4: 'Mumbai High', 5: 'Mumbai High', 6: 'Ankleshwar',
         7: 'Assam (Sivasagar)', 8: 'Assam (Sivasagar)',
         9: 'Rajahmundry (KG)', 10: 'Rajahmundry (KG)',
         11: 'Mehsana', 12: 'Mehsana',
@@ -263,24 +263,34 @@ async function seedWells() {
         return;
     }
 
-    // 1) Current well per streaming rig (job-name = well-name, attached to the rig).
-    const liveRigNumbers = SEEDED_RIG_NUMBERS.filter((n) => n <= ACTIVE_RIGS);
-    for (const n of liveRigNumbers) {
-        const rigId = `AHWR-50-${n}`;
-        const job = baseJobFor(n);
-        const [assetUnit, field, baseLat, baseLon] = unitFor(n);
-        const lat = Number((baseLat + jitter(n, 3)).toFixed(5));
-        const lon = Number((baseLon + jitter(n, 4)).toFixed(5));
-        const spud = new Date(Date.now() - (30 + (n % 20)) * 86400000).toISOString().slice(0, 10);
-        await query(
-            `INSERT INTO wells
-               (well_id, name, uwi, well_type, status, field, asset_unit, latitude, longitude,
-                spud_date, total_depth, operator, current_rig_id)
-             SELECT $1,$1,$2,'workover','workover',$3,$4,$5,$6,$7,$8,'ONGC',$9
-             WHERE EXISTS (SELECT 1 FROM rigs WHERE rig_id = $9)
-             ON CONFLICT (well_id) DO NOTHING`,
-            [job, `IN-ONGC-${1000 + n}`, field, assetUnit, lat, lon, spud,
-             Number((1500 + (n % 7) * 60).toFixed(0)), rigId]);
+    if (String(process.env.SEED_SIM_WELLS || '').toLowerCase() === 'true') {
+        // 1) Seed known sim wells without attaching them as current; real edge ingest
+        // owns current_rig_id / active_job so central does not show stale demo wells.
+        const liveRigNumbers = SEEDED_RIG_NUMBERS.filter((n) => n <= ACTIVE_RIGS);
+        for (const n of liveRigNumbers) {
+            const rigId = `AHWR-50-${n}`;
+            const job = baseJobFor(n);
+            const [assetUnit, field, baseLat, baseLon] = unitFor(n);
+            const lat = Number((baseLat + jitter(n, 3)).toFixed(5));
+            const lon = Number((baseLon + jitter(n, 4)).toFixed(5));
+            const spud = new Date(Date.now() - (30 + (n % 20)) * 86400000).toISOString().slice(0, 10);
+            await query(
+                `INSERT INTO wells
+                   (well_id, name, uwi, well_type, status, field, asset_unit, latitude, longitude,
+                    spud_date, total_depth, operator)
+                 SELECT $1,$1,$2,'workover','workover',$3,$4,$5,$6,$7,$8,'ONGC'
+                 WHERE EXISTS (SELECT 1 FROM rigs WHERE rig_id = $9)
+                 ON CONFLICT (well_id) DO NOTHING`,
+                [job, `IN-ONGC-${1000 + n}`, field, assetUnit, lat, lon, spud,
+                 Number((1500 + (n % 7) * 60).toFixed(0)), rigId]);
+        }
+    } else {
+        console.log('Seed: simulator wells disabled; edge ingest owns active wells.');
+    }
+
+    if (String(process.env.SEED_DEMO_WELLS || '').toLowerCase() !== 'true') {
+        console.log('Seed: demo well catalogue disabled; only rig-attached wells will be shown.');
+        return;
     }
 
     // 2) ~25 extra wells across asset units (varied lifecycle), NO current rig.

@@ -27,9 +27,15 @@ function rowToWell(r) {
         name: r.name,
         uwi: r.uwi,
         wellType: r.well_type,
+        serviceType: r.service_type,
         status: r.status,
         field: r.field,
         assetUnit: r.asset_unit,
+        country: r.country,
+        companyMan: r.company_man,
+        toolpusher: r.toolpusher,
+        objective: r.objective,
+        location: r.location,
         latitude: r.latitude,
         longitude: r.longitude,
         spudDate: r.spud_date,
@@ -48,7 +54,7 @@ function rowToWell(r) {
 // READ: list (proposal §6.1 — Wells list). activeRun = EXISTS an open run.
 // ---------------------------------------------------------------------
 async function getWells({ assetUnit, status, q } = {}) {
-    const where = [], vals = [];
+    const where = ['w.current_rig_id IS NOT NULL'], vals = [];
     if (assetUnit) { vals.push(assetUnit); where.push(`w.asset_unit = $${vals.length}`); }
     if (status) { vals.push(status); where.push(`w.status = $${vals.length}`); }
     if (q) {
@@ -58,7 +64,7 @@ async function getWells({ assetUnit, status, q } = {}) {
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const { rows } = await query(
-        `SELECT w.well_id, w.name, w.uwi, w.well_type, w.status, w.asset_unit, w.field,
+        `SELECT w.well_id, w.name, w.uwi, w.well_type, w.service_type, w.status, w.asset_unit, w.field,
                 w.total_depth, w.current_rig_id, w.spud_date,
                 EXISTS (SELECT 1 FROM well_runs wr WHERE wr.well_id = w.well_id AND wr.ended_at IS NULL) AS active_run
          FROM wells w ${clause}
@@ -68,6 +74,7 @@ async function getWells({ assetUnit, status, q } = {}) {
         name: r.name,
         uwi: r.uwi,
         wellType: r.well_type,
+        serviceType: r.service_type,
         status: r.status,
         assetUnit: r.asset_unit,
         field: r.field,
@@ -81,7 +88,8 @@ async function getWells({ assetUnit, status, q } = {}) {
 // Shared runs query: newest first; durationSec spans to now() when active.
 async function runsForWell(wellId) {
     const { rows } = await query(
-        `SELECT id, rig_id, job_no, started_at, ended_at,
+        `SELECT id, rig_id, job_no, service, started_by, joints, depth_delta, productive_sec, npt_sec,
+                started_at, ended_at,
                 EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::bigint AS duration_sec,
                 (ended_at IS NULL) AS active
          FROM well_runs WHERE well_id = $1 ORDER BY started_at DESC`, [wellId]);
@@ -89,6 +97,12 @@ async function runsForWell(wellId) {
         id: Number(r.id),
         rigId: r.rig_id,
         jobNo: r.job_no,
+        service: r.service,
+        startedBy: r.started_by,
+        joints: r.joints == null ? null : Number(r.joints),
+        depthDelta: r.depth_delta == null ? null : Number(r.depth_delta),
+        productiveSec: r.productive_sec == null ? null : Number(r.productive_sec),
+        nptSec: r.npt_sec == null ? null : Number(r.npt_sec),
         startedAt: r.started_at,
         endedAt: r.ended_at,
         durationSec: r.duration_sec == null ? null : Number(r.duration_sec),
@@ -268,8 +282,10 @@ async function trackRun(rigId, job, nowMs) {
             'SELECT id, well_id, job_no FROM well_runs WHERE rig_id = $1 AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1',
             [rigId])).rows[0];
 
-        if (open && open.well_id === wellId && open.job_no === jobName) {
-            // Already tracking this well/job for this rig — nothing to do.
+        if (open && open.well_id === wellId) {
+            if (!open.job_no) {
+                await client.query('UPDATE well_runs SET job_no = $2 WHERE id = $1', [open.id, jobName]);
+            }
             await client.query('COMMIT');
             return;
         }

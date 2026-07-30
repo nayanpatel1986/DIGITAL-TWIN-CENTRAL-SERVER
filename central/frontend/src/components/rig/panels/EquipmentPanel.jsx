@@ -27,6 +27,8 @@ const TREND_CHANNELS = {
     cat: [
         'cat_engine.status', 'cat_engine.source_cmd', 'cat_engine.rpm', 'cat_engine.load', 'cat_engine.coolant_temp', 'cat_engine.fuel_pressure',
         'cat_engine.oil_pressure', 'cat_engine.battery_voltage', 'cat_engine.fuel_rate',
+        'cat_engine.accel_pedal', 'cat_engine.accelerator_pedal', 'cat_engine.throttle_position',
+        'cat_engine.total_fuel_used', 'cat_engine.fuel_used_total', 'cat_engine.total_fuel', 'cat_engine.fuel_consumed',
     ],
     hpu: [
         'hpu.status', 'hpu.operating_mode', 'hpu.mode', 'hpu.pilot_status', 'hpu.gate_valve',
@@ -39,11 +41,12 @@ const TREND_CHANNELS = {
         'hpu.htd_pump_4_status', 'hpu.htd_pump2_status', 'hpu.htd_pump_4_flow', 'hpu.htd_pump_4_press',
     ],
     htd: [
-        'htd.status', 'htd.work_mode', 'htd.op_mode', 'htd.rotation',
+        'htd.status', 'htd.work_mode', 'htd.op_mode', 'htd.rotation', 'htd.rotation_status',
         'htd.rpm', 'htd.rpm_req', 'htd.rpm_cmd', 'htd.torque', 'htd.torque_req', 'htd.torque_cmd',
         'htd.vertical_speed', 'htd.inclination', 'htd.elevator_status', 'htd.ibop_status',
-        'htd.brake_status', 'htd.link_rotation', 'htd.gear_selection', 'htd.suspension',
-        'htd.lube_status', 'htd.link_tilt_status', 'htd.tilt_status', 'htd.inclination_status', 'htd.working_time',
+        'htd.brake_status', 'htd.link_rotation', 'htd.link_rotation_status', 'htd.gear_selection', 'htd.gear_status', 'htd.suspension', 'htd.suspension_status',
+        'htd.lube_status', 'htd.link_tilt_status', 'htd.tilt_status', 'htd.tilt_status_db65', 'htd.inclination_status',
+        'htd.working_time', 'htd.working_hours', 'htd.working_minutes',
     ],
     mud: [
         'mudpump.status', 'mudpump.source_cmd', 'mudpump.spm', 'mudpump.pressure',
@@ -67,7 +70,8 @@ const TREND_CHANNELS = {
         'pct.makeup_torque', 'pct.last_makeup_torque', 'pct.spinner_torque', 'pct.spinner_bo_torque',
         'pct.rotation_makeup_pressure', 'pct.rotation_bo_pressure', 'pct.clamp_up_pressure', 'pct.clamp_low_pressure',
         'pct.clamp_up_force', 'pct.clamp_low_force', 'pct.clamp_up_status', 'pct.clamp_low_status',
-        'pct.dolly_direction', 'pct.dolly_status', 'pct.spinner_rotation', 'pct.spinner_gripper', 'pct.spinner_floating',
+        'pct.dolly_direction', 'pct.dolly_status', 'pct.spinner_rotation', 'pct.spinner_rotation_status',
+        'pct.spinner_gripper', 'pct.spinner_gripper_status', 'pct.spinner_floating',
     ],
 };
 const TREND_LABELS = {
@@ -76,7 +80,7 @@ const TREND_LABELS = {
 const RANGE_OPTIONS = ['5m', '30m', '1H', '6H', '12H'];
 
 const CAT_MAPS = {
-    status: { '-1': 'UNKNOWN', 0: 'READY', 1: 'IN PROGRESS', 2: 'STATUS DONE', 3: 'EMERGENCY NOT OK', 4: 'NOT READY', 5: 'FAULT', 6: 'RUNNING + FAULT', 7: 'STOP FORCED' },
+    status: { '-1': 'UNKNOWN', 0: 'READY', 1: 'IN PROGRESS', 2: 'DONE', 3: 'EMERGENCY NOT OK', 4: 'NOT READY', 5: 'FAULT', 6: 'RUNNING + FAULT', 7: 'STOP FORCED' },
     sourceCmd: { 0: 'NONE', 1: 'LOCAL', 2: 'REMOTE', 3: 'MANUAL', 4: 'AUTO', 5: 'DCC', 6: '---' },
 };
 function catLabel(mapName, value, fallback = '---') {
@@ -89,6 +93,8 @@ function catLabel(mapName, value, fallback = '---') {
 const HPU_MAPS = {
     status: { 0: 'OFF', 1: 'ON in IDLE', 2: 'ON' },
     opMode: { 0: 'UNKNOWN', 1: 'DRILLING', 2: 'RIGUP' },
+    pilotStatus: { 0: 'OFF', 1: 'ON', 2: 'FAULT' },
+    gateValve: { 0: 'CLOSE', 1: 'OPEN' },
     oilTemp: { 0: 'TEMP. OK', 1: 'TEMP. LOW', 2: 'TEMP. HIGH', 3: 'TEMP. HIGH-HIGH' },
     oilLevel: { 0: 'LEVEL OK', 1: 'LEVEL LOW', 2: 'LEVEL LOW-LOW', 3: 'LEVEL HIGH', 4: 'LEVEL HIGH-HIGH' },
     filter: { 0: 'CLOGGED', 1: 'OK' },
@@ -105,6 +111,7 @@ const HTD_MAPS = {
     status: { 0: 'OFF', 1: 'ON in IDLE', 2: 'ON' },
     workMode: { 0: 'UNKNOWN', 1: 'DRILL', 2: 'SPIN', 3: 'TORQUE' },
     opMode: { 0: 'UNKNOWN', 1: 'DOLLY', 2: 'LINK' },
+    rotation: { 0: 'STAND STILL', 1: 'ROTATION FWD', 2: 'ROTATION BWD', 3: 'NEUTRAL' },
     lube: { 0: 'OFF', 1: 'CMD RUN', 2: 'RUNNING', 3: 'FAULT' },
     gearSelection: { '-1': 'FAULT', 0: 'UNKNOWN', 1: 'GEAR 1', 2: 'GEAR 2', 3: 'GEAR 3', 4: 'GEAR 4', 5: 'GEAR 1 REGENERATIVE', 6: 'GEAR 2 REGENERATIVE', 7: 'GEAR 3 REGENERATIVE', 8: 'GEAR 4 REGENERATIVE' },
     brake: { 0: 'UNKNOWN', 1: 'CLOSING', 2: 'CLOSED', 3: 'OPENING', 4: 'OPEN', 5: 'FAULT' },
@@ -124,6 +131,34 @@ function htdLabel(mapName, value, fallback = '---') {
         if (Object.prototype.hasOwnProperty.call(map, n)) return map[n];
         if (Object.prototype.hasOwnProperty.call(map, String(n))) return map[String(n)];
     }
+    return String(value);
+}
+const ACS_MAPS = {
+    status: { 0: 'UNKNOWN', 1: 'ON', 2: 'OFF', 3: 'DISABLE' },
+    calibration: { 0: 'UNKNOWN', 1: 'SEQ IN PROGRESS', 2: 'NOT CALIBRATED', 3: 'CALIBRATED', 10: 'MOVE UP TO CROWN', 11: 'MOVE DOWN TO TAG LOW' },
+};
+function acsLabel(mapName, value, fallback = '---') {
+    if (value == null || value === '') return fallback;
+    const n = Number(value);
+    const map = ACS_MAPS[mapName] || {};
+    if (Number.isFinite(n) && Object.prototype.hasOwnProperty.call(map, n)) return map[n];
+    return String(value);
+}
+const CWK_MAPS = {
+    status: { 0: 'NOT IN PARK POSITION', 1: 'PARK POSITION' },
+    sourceCmd: { 0: 'UNKNOWN', 1: 'DCC', 2: 'RADIOCONTROL' },
+    clamp: { 0: 'NONE', 1: 'OPENING', 2: 'CLOSING', 3: 'IS OPEN', 4: 'IS CLOSE', 5: 'FAULT' },
+    carrier: { 1: 'STOP', 2: 'PARKING POSITION', 3: 'WORK POSITION', 4: 'LIFTING', 5: 'LOWERING', 6: 'FAULT' },
+    indexer: { 1: 'UP', 2: 'DOWN', 3: 'FAULT' },
+    kicker: { 1: 'EXTEND', 2: 'RETRACT', 3: 'FAULT' },
+    skate: { 1: 'IDLE', 2: 'PARKING POSITION', 3: 'FWD CMD', 4: 'BWD CMD', 5: 'FAULT' },
+    slide: { 1: 'IDLE', 2: 'PARKING POSITION', 3: 'FWD CMD', 4: 'BWD CMD', 5: 'FAULT' },
+};
+function cwkLabel(mapName, value, fallback = '---') {
+    if (value == null || value === '') return fallback;
+    const n = Number(value);
+    const map = CWK_MAPS[mapName] || {};
+    if (Number.isFinite(n) && Object.prototype.hasOwnProperty.call(map, n)) return map[n];
     return String(value);
 }
 const PCT_MAPS = {
@@ -152,6 +187,45 @@ function val(value, d = 0, fallback = '--') {
     return Number.isFinite(n) ? fmtNum(n, d) : String(value);
 }
 
+function numericValue(value) {
+    if (value == null || value === '') return null;
+    const n = typeof value === 'number' ? value : Number(String(value).replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+}
+
+function defaultMaxForUnit(unit) {
+    const text = String(unit || '').toLowerCase();
+    if (text.includes('%')) return 100;
+    if (text.includes('rpm')) return 2500;
+    if (text.includes('bar')) return 350;
+    if (text.includes('degc') || text.includes('°c')) return 120;
+    if (text.includes('v')) return 32;
+    if (text.includes('l/h')) return 150;
+    if (text.includes('l')) return 10000;
+    if (text.includes('dan-m')) return 50000;
+    if (text.includes('dan')) return 50000;
+    if (text.includes('mm/sec')) return 300;
+    return 100;
+}
+
+function barPercent(value, unit, max, min = 0) {
+    const n = numericValue(value);
+    if (n == null) return 0;
+    const hi = Number(max || defaultMaxForUnit(unit));
+    const lo = Number(min);
+    if (!Number.isFinite(hi) || hi <= lo) return 0;
+    return Math.max(0, Math.min(100, ((n - lo) / (hi - lo)) * 100));
+}
+
+function ValueBar({ value, unit, color = BLUE, max, min = 0 }) {
+    const pct = barPercent(value, unit, max, min);
+    return (
+        <Box sx={{ mt: 1.35, height: 12, borderRadius: 99, bgcolor: 'rgba(148,163,184,.28)', overflow: 'hidden' }}>
+            <Box sx={{ width: `${pct}%`, height: '100%', borderRadius: 99, bgcolor: color, boxShadow: pct > 0 ? `0 0 12px ${color}` : 'none', transition: 'width .25s ease' }} />
+        </Box>
+    );
+}
+
 function StatusBox({ label, value }) {
     return (
         <Box sx={{ minWidth: 130 }}>
@@ -164,22 +238,24 @@ function StatusBox({ label, value }) {
 }
 
 function RuntimeBox({ label, value, unit = 'HRS', blue = false }) {
+    const n = numericValue(value);
+    const display = n == null ? (value ?? '---') : val(value, 2, '0.00');
     return (
         <Box sx={{ textAlign: 'right', minWidth: 150 }}>
             <Typography variant="caption" fontWeight={900}>{label}</Typography>
-            <Typography fontWeight={900} sx={{ fontSize: 24, color: blue ? BLUE : '#fff' }}>{val(value, 2, '0.00')} <Typography component="span" color="text.secondary" fontSize={13} fontWeight={900}>{unit}</Typography></Typography>
+            <Typography fontWeight={900} sx={{ fontSize: 24, color: blue ? BLUE : '#fff', whiteSpace: 'nowrap' }}>{display}{n != null && unit ? <Typography component="span" color="text.secondary" fontSize={13} fontWeight={900}> {unit}</Typography> : null}</Typography>
         </Box>
     );
 }
 
 function TopStatus({ left = [], right = [] }) {
     return (
-        <Paper sx={{ p: 1.8, mb: 2, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.22)', borderRadius: 0.75 }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-                <Stack direction="row" spacing={3} alignItems="center" divider={<Box sx={{ width: 1, height: 46, bgcolor: 'rgba(148,163,184,.2)' }} />}>
+        <Paper sx={{ p: 1.8, mb: 2, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.22)', borderRadius: 0.75, overflow: 'hidden' }}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2} useFlexGap flexWrap="wrap">
+                <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap" divider={<Box sx={{ display: { xs: 'none', md: 'block' }, width: 1, height: 46, bgcolor: 'rgba(148,163,184,.2)' }} />}>
                     {left.map((item) => <StatusBox key={item.label} {...item} />)}
                 </Stack>
-                <Stack direction="row" spacing={3} alignItems="center">
+                <Stack direction="row" spacing={2} alignItems="center" useFlexGap flexWrap="wrap" sx={{ ml: 'auto' }}>
                     {right.map((item) => <RuntimeBox key={item.label} {...item} />)}
                 </Stack>
             </Stack>
@@ -198,15 +274,16 @@ function Section({ title, children }) {
     );
 }
 
-function MetricTile({ label, value, unit, color = BLUE, note }) {
+function MetricTile({ label, value, unit, color = BLUE, note, max, min = 0 }) {
     return (
-        <Paper sx={{ p: 1.8, minHeight: 92, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.24)', borderRadius: 1 }}>
-            <Typography fontWeight={900} sx={{ letterSpacing: 0.6, fontSize: 14 }}>{label}</Typography>
-            <Stack direction="row" alignItems="baseline" spacing={0.75} mt={2}>
-                <Typography fontWeight={900} sx={{ color, fontSize: 18, lineHeight: 1 }}>{value}</Typography>
-                <Typography fontWeight={900}>{unit}</Typography>
+        <Paper sx={{ p: 1.8, minHeight: 112, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.24)', borderRadius: 1 }}>
+            <Typography fontWeight={900} sx={{ letterSpacing: 0.6, fontSize: 14, color: '#dbeafe' }}>{label}</Typography>
+            <Stack direction="row" alignItems="baseline" spacing={0.75} mt={1.6}>
+                <Typography fontWeight={900} sx={{ color, fontSize: 34, lineHeight: 1 }}>{value}</Typography>
+                <Typography fontWeight={900} color="#dbeafe">{unit}</Typography>
             </Stack>
-            {note && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.8 }}>{note}</Typography>}
+            <ValueBar value={value} unit={unit} color={color} max={max} min={min} />
+            {note && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>{note}</Typography>}
         </Paper>
     );
 }
@@ -285,18 +362,25 @@ function StatusTile({ label, value }) {
 function TrendPanel({ rigId, active }) {
     const channels = TREND_CHANNELS[active] || TREND_CHANNELS.cat;
     const rangeKey = `crmf-equip-range-${active}-${rigId}`;
-    const [selectedRange, setSelectedRange] = useState(() => {
+    const loadRange = () => {
         try {
             const saved = localStorage.getItem(rangeKey);
             return RANGE_OPTIONS.includes(saved) ? saved : '5m';
         } catch (e) {
             return '5m';
         }
+    };
+    const [selectedRange, setSelectedRange] = useState(() => {
+        return loadRange();
     });
     const strips = useMemo(() => [{
         title: TREND_LABELS[active] || 'ENGINE',
         pens: channels.map((channelId, i) => ({ channelId, color: [BLUE, ORANGE, GREEN, PURPLE][i % 4], min: 0, max: 100, enabled: true })),
     }], [active, channels]);
+
+    useEffect(() => {
+        setSelectedRange(loadRange());
+    }, [rangeKey]);
 
     useEffect(() => {
         try { localStorage.setItem(rangeKey, selectedRange); } catch (e) { /* best effort */ }
@@ -323,7 +407,7 @@ function TrendPanel({ rigId, active }) {
             </Stack>
             <Typography fontWeight={900} color="#22c55e" sx={{ fontSize: 13, mb: 1 }}>LIVE</Typography>
             <Box sx={{ flex: 1, minHeight: 0 }}>
-                <EdrView key={`equip-trend-v4-${active}`} mode="compact" rigId={rigId} storageKey={`crmf-equip-v4-${active}-${rigId}`} defaultStrips={strips} channels={channels} hideToolbar timeWindowLabel={selectedRange} />
+                <EdrView key={`equip-trend-v4-${active}`} mode="compact" rigId={rigId} storageKey={`crmf-equip-v4-${active}-${rigId}`} defaultStrips={strips} channels={channels} hideToolbar timeWindowLabel={selectedRange} syncTimeWindowLabel />
             </Box>
         </Paper>
     );
@@ -331,18 +415,20 @@ function TrendPanel({ rigId, active }) {
 
 function CatPage({ d }) {
     const g = d.cat_engine || {};
+    const accelPedal = g.accel_pedal ?? g.accelerator_pedal ?? g.accel_pedal_position ?? g.throttle_position ?? g.throttle ?? g.acc_pedal;
+    const totalFuelUsed = g.total_fuel_used ?? g.fuel_used_total ?? g.total_fuel ?? g.total_fuel_consumed ?? g.fuel_consumed ?? g.fuel_consumption_total;
     return <>
         <TopStatus left={[{ label: 'ENGINE STATUS', value: catLabel('status', g.status) }, { label: 'SOURCE CMD', value: catLabel('sourceCmd', g.source_cmd) }]} right={[{ label: 'RUN HOURS', value: g.run_hours }, { label: 'TOTAL ENGINE HOURS', value: g.total_hours, blue: true }]} />
         <Section title="PERFORMANCE">
             <MetricTile label="ENGINE SPEED" value={val(g.rpm)} unit="RPM" />
             <MetricTile label="ENGINE LOAD" value={val(g.load)} unit="%" color={GREEN} />
-            <MetricTile label="ACCEL PEDAL" value={val(g.accel_pedal)} unit="%" color={PURPLE} />
+            <MetricTile label="ACCEL PEDAL" value={val(accelPedal)} unit="%" color={PURPLE} />
             <MetricTile label="FUEL RATE" value={val(g.fuel_rate, 1)} unit="L/h" color="#22d3ee" />
         </Section>
         <Section title="FUEL & ELECTRICAL">
             <MetricTile label="FUEL PRESSURE" value={val(g.fuel_pressure, 1)} unit="bar" />
             <MetricTile label="FUEL TEMP" value={val(g.fuel_temp)} unit="degC" color={ORANGE} />
-            <MetricTile label="TOTAL FUEL USED" value={val(g.total_fuel_used)} unit="L" color={PURPLE} note="Lifetime consumption" />
+            <MetricTile label="TOTAL FUEL USED" value={val(totalFuelUsed)} unit="L" color={PURPLE} note="Lifetime consumption" />
             <MetricTile label="BATTERY VOLTAGE" value={val(g.battery_voltage, 1)} unit="V" color={GREEN} note="DC bus potential" />
         </Section>
         <Section title="LUBRICATION & COOLING">
@@ -360,8 +446,8 @@ function HpuPage({ d }) {
             left={[
                 { label: 'SYSTEM STATUS', value: hpuLabel('status', g.status) },
                 { label: 'OPERATING MODE', value: hpuLabel('opMode', g.operating_mode ?? g.mode) },
-                { label: 'PILOT STATUS', value: g.pilot_status ?? '---' },
-                { label: 'GATE VALVE', value: g.gate_valve ?? '---' },
+                { label: 'PILOT STATUS', value: hpuLabel('pilotStatus', g.pilot_status) },
+                { label: 'GATE VALVE', value: hpuLabel('gateValve', g.gate_valve) },
             ]}
             right={[{ label: 'RUN HOURS', value: g.run_hours, blue: true }]}
         />
@@ -404,13 +490,13 @@ function ListPanel({ title, rows }) {
     );
 }
 
-function ReadoutPanel({ title, value, unit, color = BLUE, subtitle }) {
+function ReadoutPanel({ title, value, unit, color = BLUE, subtitle, max, min = 0 }) {
     return (
         <Paper sx={{ p: 1.7, minHeight: 120, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.24)', borderRadius: 1 }}>
             <Typography fontWeight={900} sx={{ letterSpacing: 0.6, fontSize: 14 }}>{title}</Typography>
             <Typography fontWeight={900} sx={{ mt: 1.4, color, fontSize: 36, lineHeight: 1 }}>{value}<Typography component="span" sx={{ ml: 0.6, color: '#dbeafe', fontSize: 16, fontWeight: 900 }}>{unit}</Typography></Typography>
             {subtitle && <Typography variant="caption" sx={{ display: 'block', mt: 1.2 }}>{subtitle}</Typography>}
-            <Box sx={{ mt: 1.5, height: 5, borderRadius: 99, bgcolor: 'rgba(148,163,184,.25)' }} />
+            <ValueBar value={value} unit={unit} color={color} max={max} min={min} />
         </Paper>
     );
 }
@@ -437,6 +523,8 @@ function TankVolumesPanel({ fluid }) {
 }
 
 function ClampCard({ title, color, pressure, force, extra }) {
+    const pressureValue = val(pressure, 2, '0.00');
+    const forceValue = val(force, 2, '0.00');
     return (
         <Box sx={{ bgcolor: '#0f172a', borderRadius: 0.75, p: 1.5, minHeight: 150 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1.5}>
@@ -444,10 +532,17 @@ function ClampCard({ title, color, pressure, force, extra }) {
                 <Typography color="text.secondary" fontWeight={900}>{extra ?? '---'}</Typography>
             </Stack>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box><Typography color="text.secondary" sx={{ fontSize: 12 }}>PRESSURE (bar)</Typography><Typography fontWeight={900} sx={{ fontSize: 22 }}>{val(pressure, 2, '0.00')}</Typography></Box>
-                <Box><Typography color="text.secondary" sx={{ fontSize: 12 }}>FORCE (daN)</Typography><Typography fontWeight={900} sx={{ fontSize: 22 }}>{val(force, 2, '0.00')}</Typography></Box>
+                <Box>
+                    <Typography color="text.secondary" sx={{ fontSize: 12 }}>PRESSURE (bar)</Typography>
+                    <Typography fontWeight={900} sx={{ fontSize: 28, color }}>{pressureValue}</Typography>
+                    <ValueBar value={pressureValue} unit="bar" color={color} max={350} />
+                </Box>
+                <Box>
+                    <Typography color="text.secondary" sx={{ fontSize: 12 }}>FORCE (daN)</Typography>
+                    <Typography fontWeight={900} sx={{ fontSize: 28, color }}>{forceValue}</Typography>
+                    <ValueBar value={forceValue} unit="daN" color={color} max={50000} />
+                </Box>
             </Box>
-            <Stack direction="row" justifyContent="space-between" mt={1.5}><Typography color="text.secondary">---</Typography><Typography color="text.secondary">---</Typography></Stack>
         </Box>
     );
 }
@@ -463,23 +558,31 @@ function ClampDetailsPanel({ g }) {
         </Paper>
     );
 }
+
+function htdWorkingTime(g) {
+    const hours = g.working_hours;
+    const minutes = g.working_minutes;
+    if (hours != null || minutes != null) return `${val(hours, 0, '0')}h ${val(minutes, 0, '0')}m`;
+    return g.working_time ?? g.run_hours;
+}
+
 function HtdPage({ d }) {
     const g = d.htd || {};
     return <>
         <TopStatus
-            left={[{ label: 'STATUS', value: htdLabel('status', g.status) }, { label: 'WORK MODE', value: htdLabel('workMode', g.work_mode) }, { label: 'GEAR SELECTION', value: htdLabel('gearSelection', g.gear_selection ?? g.gear_status) }, { label: 'ROTATION', value: g.rotation ?? g.rotation_status ?? '---' }]}
-            right={[{ label: 'WORKING TIME', value: g.working_time ?? g.run_hours, unit: 'h', blue: true }]}
+            left={[{ label: 'STATUS', value: htdLabel('status', g.status) }, { label: 'WORK MODE', value: htdLabel('workMode', g.work_mode) }, { label: 'GEAR SELECTION', value: htdLabel('gearSelection', g.gear_selection ?? g.gear_status) }, { label: 'ROTATION', value: htdLabel('rotation', g.rotation_status ?? g.rotation) }]}
+            right={[{ label: 'WORKING TIME', value: htdWorkingTime(g), unit: '', blue: true }]}
         />
         <Section title="ROTARY & MOTION">
-            <MetricTile label="TOP DRIVE RPM" value={val(g.rpm)} unit="RPM" color={BLUE} note={`REQ ${val(g.rpm_req, 0, '0')} - CMD ${val(g.rpm_cmd, 0, '0')}`} />
-            <MetricTile label="HTD TORQUE" value={val(g.torque, 2)} unit="daN-m" color={YELLOW} note={`REQ ${val(g.torque_req, 0, '0')} - CMD ${val(g.torque_cmd, 0, '0')}`} />
+            <MetricTile label="TOP DRIVE RPM" value={val(g.rpm)} unit="RPM" color={BLUE} note={`REQ ${val(g.rpm_req ?? g.rpm_request, 0, '0')} - CMD ${val(g.rpm_cmd ?? g.rpm_command, 0, '0')}`} />
+            <MetricTile label="HTD TORQUE" value={val(g.torque, 2)} unit="daN-m" color={YELLOW} note={`REQ ${val(g.torque_req ?? g.torque_request, 0, '0')} - CMD ${val(g.torque_cmd ?? g.torque_command, 0, '0')}`} />
             <MetricTile label="VERTICAL SPEED" value={val(g.v_speed ?? g.vertical_speed, 2)} unit="mm/sec" color={GREEN} />
             <MetricTile label="INCLINATION" value={val(g.inclination, 1)} unit="%" color={PURPLE} />
         </Section>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr 1fr' }, gap: 1.5 }}>
-            <ListPanel title="MECHANISMS & LINKS" rows={[{ label: 'ELEVATOR', value: htdLabel('elevator', g.elevator_status) }, { label: 'IBOP', value: htdLabel('ibop', g.ibop_status) }, { label: 'BRAKE', value: htdLabel('brake', g.brake ?? g.brake_status) }, { label: 'LINK ROTATION', value: htdLabel('linkRotation', g.link_rotation) }]} />
-            <ListPanel title="DRIVE SYSTEM" rows={[{ label: 'GEAR SELECTION', value: htdLabel('gearSelection', g.gear_selection ?? g.gear_status) }, { label: 'SUSPENSION', value: htdLabel('suspension', g.suspension) }, { label: 'LUBE', value: htdLabel('lube', g.lube_status) }]} />
-            <ListPanel title="POSITIONING" rows={[{ label: 'LINK TILT', value: htdLabel('linkTilt', g.link_tilt_status ?? g.link_tilt) }, { label: 'TILT', value: htdLabel('tilt', g.tilt_status) }, { label: 'INCLINATION STATUS', value: htdLabel('inclinationStatus', g.inclination_status) }, { label: 'INCLINATION', value: val(g.inclination, 1, '---') }]} />
+            <ListPanel title="MECHANISMS & LINKS" rows={[{ label: 'ELEVATOR', value: htdLabel('elevator', g.elevator_status) }, { label: 'IBOP', value: htdLabel('ibop', g.ibop_status) }, { label: 'BRAKE', value: htdLabel('brake', g.brake ?? g.brake_status) }, { label: 'LINK ROTATION', value: htdLabel('linkRotation', g.link_rotation_status ?? g.link_rotation) }]} />
+            <ListPanel title="DRIVE SYSTEM" rows={[{ label: 'GEAR SELECTION', value: htdLabel('gearSelection', g.gear_selection ?? g.gear_status) }, { label: 'SUSPENSION', value: htdLabel('suspension', g.suspension ?? g.suspension_status) }, { label: 'LUBE', value: htdLabel('lube', g.lube_status) }]} />
+            <ListPanel title="POSITIONING" rows={[{ label: 'LINK TILT', value: htdLabel('linkTilt', g.link_tilt_status ?? g.tilt_status_db65 ?? g.link_tilt) }, { label: 'TILT', value: htdLabel('tilt', g.tilt_status ?? g.tilt_status_db65) }, { label: 'INCLINATION STATUS', value: htdLabel('inclinationStatus', g.inclination_status) }, { label: 'INCLINATION', value: val(g.inclination, 1, '---') }]} />
         </Box>
     </>;
 }
@@ -509,7 +612,7 @@ function MudPage({ d }) {
 function AcsPage({ d }) {
     const g = d.acs || {};
     return <>
-        <TopStatus left={[{ label: 'SYSTEM STATUS', value: g.status ?? 'Unknown' }, { label: 'CALIBRATION', value: g.calibration ?? 'Unknown' }]} right={[]} />
+        <TopStatus left={[{ label: 'SYSTEM STATUS', value: acsLabel('status', g.status) }, { label: 'CALIBRATION', value: acsLabel('calibration', g.calibration) }]} right={[]} />
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '0.9fr 1.9fr' }, gap: 1.5, mb: 1.5 }}>
             <Paper sx={{ p: 1.5, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.24)', borderRadius: 1 }}>
                 <Typography sx={{ color: '#93b4d8', mb: 1.5, fontSize: 18 }}>BLOCK POSITION</Typography>
@@ -540,14 +643,14 @@ function AcsPage({ d }) {
 function CatwalkPage({ d }) {
     const g = d.cwk || {};
     return <>
-        <TopStatus left={[{ label: 'GLOBAL STATUS', value: g.status ?? '---' }, { label: 'SOURCE CMD', value: g.source_cmd ?? '---' }, { label: 'CLAMP', value: g.clamp_status ?? '---' }, { label: 'CARRIER', value: g.carrier_status ?? '---' }]} right={[]} />
+        <TopStatus left={[{ label: 'GLOBAL STATUS', value: cwkLabel('status', g.status) }, { label: 'SOURCE CMD', value: cwkLabel('sourceCmd', g.source_cmd) }, { label: 'CLAMP', value: cwkLabel('clamp', g.clamp_status) }, { label: 'CARRIER', value: cwkLabel('carrier', g.carrier_status) }]} right={[]} />
         <Section title="CLAMP MEASUREMENTS">
             <MetricTile label="CLAMP PRESSURE" value={val(g.clamp_pressure, 2, '---')} unit="bar" />
             <MetricTile label="CLAMP FORCE" value={val(g.clamp_force, 2, '---')} unit="daN" color={PURPLE} />
         </Section>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.5 }}>
-            <ListPanel title="INDEXERS & KICKERS" rows={[{ label: 'INDEXER DX', value: g.indexer_dx }, { label: 'INDEXER SX', value: g.indexer_sx }, { label: 'KICKERS DX', value: g.kickers_dx }, { label: 'KICKERS SX', value: g.kickers_sx }]} />
-            <ListPanel title="MOTION & HANDLING" rows={[{ label: 'SKATE', value: g.skate }, { label: 'SLIDE', value: g.slide }, { label: 'CARRIER', value: g.carrier_status }, { label: 'CLAMP STATUS', value: g.clamp_status }]} />
+            <ListPanel title="INDEXERS & KICKERS" rows={[{ label: 'INDEXER DX', value: cwkLabel('indexer', g.indexer_dx) }, { label: 'INDEXER SX', value: cwkLabel('indexer', g.indexer_sx) }, { label: 'KICKERS DX', value: cwkLabel('kicker', g.kickers_dx) }, { label: 'KICKERS SX', value: cwkLabel('kicker', g.kickers_sx) }]} />
+            <ListPanel title="MOTION & HANDLING" rows={[{ label: 'SKATE', value: cwkLabel('skate', g.skate) }, { label: 'SLIDE', value: cwkLabel('slide', g.slide) }, { label: 'CARRIER', value: cwkLabel('carrier', g.carrier_status) }, { label: 'CLAMP STATUS', value: cwkLabel('clamp', g.clamp_status) }]} />
         </Box>
     </>;
 }
@@ -566,7 +669,7 @@ function PctPage({ d }) {
         </Section>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.15fr 0.85fr' }, gap: 1.5 }}>
             <ClampDetailsPanel g={g} />
-            <ListPanel title="DOLLY & SPINNER" rows={[{ label: 'DOLLY DIRECTION', value: pctLabel('dollyUpDown', g.dolly_direction) }, { label: 'DOLLY STATUS', value: pctLabel('dollyWorkPark', g.dolly_status) }, { label: 'SPINNER ROTATION', value: pctLabel('spinnerRotation', g.spinner_rotation) }, { label: 'SPINNER GRIPPER', value: pctLabel('spinnerGripper', g.spinner_gripper) }, { label: 'SPINNER FLOATING', value: pctLabel('spinnerFloating', g.spinner_floating) }]} />
+            <ListPanel title="DOLLY & SPINNER" rows={[{ label: 'DOLLY DIRECTION', value: pctLabel('dollyUpDown', g.dolly_direction) }, { label: 'DOLLY STATUS', value: pctLabel('dollyWorkPark', g.dolly_status) }, { label: 'SPINNER ROTATION', value: pctLabel('spinnerRotation', g.spinner_rotation_status ?? g.spinner_rotation) }, { label: 'SPINNER GRIPPER', value: pctLabel('spinnerGripper', g.spinner_gripper_status ?? g.spinner_gripper) }, { label: 'SPINNER FLOATING', value: pctLabel('spinnerFloating', g.spinner_floating) }]} />
         </Box>
     </>;
 }
@@ -574,9 +677,21 @@ const PAGE = { cat: CatPage, hpu: HpuPage, htd: HtdPage, mud: MudPage, acs: AcsP
 
 export default function EquipmentPanel({ rigId }) {
     const { data, loading, error } = useRigData();
-    const [active, setActive] = useState('cat');
+    const activeKey = `crmf-equip-active-${rigId}`;
+    const [active, setActive] = useState(() => {
+        try {
+            const saved = localStorage.getItem(activeKey);
+            return EQUIP_TABS.some((tab) => tab.key === saved) ? saved : 'cat';
+        } catch (e) {
+            return 'cat';
+        }
+    });
     const Page = PAGE[active] || CatPage;
     const safe = data || {};
+
+    useEffect(() => {
+        try { localStorage.setItem(activeKey, active); } catch (e) { /* best effort */ }
+    }, [activeKey, active]);
 
     return (
         <Box sx={{ height: '100%', bgcolor: BG, overflow: 'auto', p: 1.25 }}>
@@ -603,7 +718,7 @@ export default function EquipmentPanel({ rigId }) {
                 <Box sx={{ minWidth: 0 }}>
                     <Page d={safe} />
                 </Box>
-                <TrendPanel rigId={rigId} active={active} />
+                <TrendPanel key={`equipment-trend-${rigId}-${active}`} rigId={rigId} active={active} />
             </Box>
         </Box>
     );

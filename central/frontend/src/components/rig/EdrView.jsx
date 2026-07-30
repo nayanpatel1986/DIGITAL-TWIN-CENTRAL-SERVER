@@ -27,6 +27,7 @@ import {
     ChevronsUp,
     Clock,
     Gauge,
+    Minus,
     Plus,
     Radio,
     Ruler,
@@ -887,7 +888,8 @@ export default function EdrView({
     channels = null,
     window: replayWindow = null,
     hideToolbar = false,
-    timeWindowLabel = null
+    timeWindowLabel = null,
+    syncTimeWindowLabel = false
 }) {
     const theme = useTheme();
     const isCompact = mode === 'compact';
@@ -930,19 +932,20 @@ export default function EdrView({
     const [scrollOffset, setScrollOffset] = useState(0); // ms back in time, or m up in depth
     const [configStrip, setConfigStrip] = useState(null);
     const [sharedCursorFrac, setSharedCursorFrac] = useState(null);
+    const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
 
     const [data, setData] = useState([]); // [{ timestamp, depth, values:{channelId:value} }]
     const dragRef = useRef(null);
 
     useEffect(() => {
-        if (!timeWindowLabel || hasSavedTimeWindow) return;
+        if (!timeWindowLabel || (!syncTimeWindowLabel && hasSavedTimeWindow)) return;
         const idx = TIME_WINDOWS.findIndex((w) => w.label.toLowerCase() === String(timeWindowLabel).toLowerCase());
         if (idx >= 0) {
             setIndexMode('time');
             setTimeWinIdx(idx);
             setScrollOffset(0);
         }
-    }, [timeWindowLabel]);
+    }, [timeWindowLabel, syncTimeWindowLabel, hasSavedTimeWindow]);
 
     // Persist strip config + index mode + readout selection (same storageKey).
     useEffect(() => {
@@ -962,6 +965,11 @@ export default function EdrView({
 
     const timeWindowMs = TIME_WINDOWS[timeWinIdx]?.ms ?? TIME_WINDOWS[0].ms;
     const timeRange = TIME_WINDOWS[timeWinIdx]?.range ?? '-15m';
+    const historyWindowMs = useMemo(() => {
+        if (offline || indexMode !== 'time') return timeWindowMs;
+        return Math.max(timeWindowMs, scrollOffset + timeWindowMs);
+    }, [offline, indexMode, scrollOffset, timeWindowMs]);
+    const historyMinutes = useMemo(() => Math.max(1, Math.ceil(historyWindowMs / 60000) + 1), [historyWindowMs]);
 
     // ---- History seed ----
     // Shared row->sample mapper for both the rolling (live) and fixed-range (offline) seeds.
@@ -986,14 +994,14 @@ export default function EdrView({
             // OFFLINE: seed from the FIXED [fromMs,toMs] range (range mode); LIVE: rolling minutes.
             const res = offline
                 ? await api.rigHistoryRange(rigId, neededChannels, winFromMs, winToMs)
-                : await api.rigHistoryMulti(rigId, neededChannels, Math.max(1, Math.round(timeWindowMs / 60000)));
+                : await api.rigHistoryMulti(rigId, neededChannels, historyMinutes);
             if (reqId !== historyReq.current) return;
             setData(rowsToSamples(res?.rows));
         } catch (err) {
             if (reqId !== historyReq.current) return;
             console.error('EdrView: failed to load history', err);
         }
-    }, [rowsToSamples, neededChannels, timeWindowMs, rigId, offline, winFromMs, winToMs]);
+    }, [rowsToSamples, neededChannels, historyMinutes, rigId, offline, winFromMs, winToMs]);
 
     // ---- Live point ingestion (shared socket) ----
     const ingest = useCallback((payload) => {
@@ -1026,6 +1034,15 @@ export default function EdrView({
 
     // History seed whenever the metric set / time window changes.
     useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+    // Keep the live EDR time axis moving even when telemetry is stale or missing.
+    useEffect(() => {
+        if (offline || indexMode !== 'time') return undefined;
+        const tick = () => setLiveNowMs(Date.now());
+        tick();
+        const id = window.setInterval(tick, 1000);
+        return () => window.clearInterval(id);
+    }, [offline, indexMode]);
 
     // Live point ingestion: the central RigDataProvider polls /api/rigs/:id/live (the
     // edge `rig_data` nested shape with _meta.ts), so feed each new payload to ingest().
@@ -1065,9 +1082,9 @@ export default function EdrView({
         // Time mode: newest at the BOTTOM.
         // OFFLINE replay anchors the bottom of the visible window to the recorded end
         // (toMs) so scrollOffset walks back inside the FIXED [fromMs,toMs] range; clamp
-        // so the window can't run past the recorded start. LIVE anchors to the newest
-        // ingested sample (or now) as before.
-        const anchor = offline ? winToMs : (sorted.length ? sorted[sorted.length - 1].timestamp : Date.now());
+        // so the window can't run past the recorded start. LIVE anchors to the actual
+        // PC/browser clock so the axis keeps showing current time even if data is stale.
+        const anchor = offline ? winToMs : liveNowMs;
         let bottom = anchor - scrollOffset;
         if (offline) {
             // Don't scroll the top edge before the recorded start.
@@ -1077,7 +1094,7 @@ export default function EdrView({
         }
         const top = bottom - timeWindowMs;
         return { indexDomain: [top, bottom], samples: sorted };
-    }, [indexMode, sorted, depthSpanIdx, maxDepth, scrollOffset, timeWindowMs, offline, winFromMs, winToMs]);
+    }, [indexMode, sorted, depthSpanIdx, maxDepth, scrollOffset, timeWindowMs, offline, winFromMs, winToMs, liveNowMs]);
 
     const latestValues = useMemo(() => (sorted.length ? sorted[sorted.length - 1].values : {}), [sorted]);
 
@@ -1125,6 +1142,8 @@ export default function EdrView({
 
     const scrollBack = useCallback(() => scrollByAmount(scrollStep), [scrollByAmount, scrollStep]);   // older / shallower
     const scrollFwd = useCallback(() => scrollByAmount(-scrollStep), [scrollByAmount, scrollStep]);    // newer / deeper
+    const stepWindowBack = useCallback(() => scrollByAmount(windowLen), [scrollByAmount, windowLen]);
+    const stepWindowFwd = useCallback(() => scrollByAmount(-windowLen), [scrollByAmount, windowLen]);
 
     // --- Mouse-wheel continuous scroll (non-passive so we can preventDefault) ---
     const stripAreaRef = useRef(null);
@@ -1255,8 +1274,14 @@ export default function EdrView({
 
                         {!isCompact && (
                             <>
-                                <IconButton size="small" sx={{ color: subText, border: `1px solid ${border}`, borderRadius: 0.75, width: 36, height: 36 }}><Plus size={17} /></IconButton>
-                                <IconButton size="small" sx={{ color: subText, border: `1px solid ${border}`, borderRadius: 0.75, width: 36, height: 36 }}><Trash2 size={17} /></IconButton>
+                                <MuiTooltip title={indexMode === 'depth' ? 'Move deeper by selected depth range' : 'Increase time / move newer by selected range'}>
+                                    <span>
+                                        <IconButton size="small" onClick={stepWindowFwd} disabled={liveAtBottom} sx={{ color: subText, border: `1px solid ${border}`, borderRadius: 0.75, width: 36, height: 36 }}><Plus size={17} /></IconButton>
+                                    </span>
+                                </MuiTooltip>
+                                <MuiTooltip title={indexMode === 'depth' ? 'Move shallower by selected depth range' : 'Decrease time / move older by selected range'}>
+                                    <IconButton size="small" onClick={stepWindowBack} sx={{ color: subText, border: `1px solid ${border}`, borderRadius: 0.75, width: 36, height: 36 }}><Minus size={17} /></IconButton>
+                                </MuiTooltip>
                             </>
                         )}
 

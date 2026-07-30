@@ -238,15 +238,24 @@ function cleanText(v) {
 
 function isWellKey(key) {
     const s = String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return ['well', 'wellname', 'job', 'jobname', 'activejob'].includes(s)
+    return ['well', 'wellid', 'wellname', 'wellbore', 'wellborename', 'job', 'jobname', 'activejob', 'currentwell', 'currentwellname'].includes(s)
         || s.endsWith('wellname')
+        || s.endsWith('wellid')
+        || s.endsWith('wellbore')
+        || s.endsWith('wellborename')
         || s.endsWith('jobname')
         || s.includes('wellname')
+        || s.includes('currentwell')
         || s.includes('activejob');
 }
 
 function pickWellName(ws, ...sources) {
-    const keys = ['wellName', 'well_name', 'well.name', 'well', 'jobName', 'job_name', 'job.name', 'job', 'activeJob', 'active_job'];
+    const keys = [
+        'wellName', 'well_name', 'well.name', 'well', 'wellId', 'well_id',
+        'currentWell', 'current_well', 'currentWellName', 'current_well_name',
+        'wellboreName', 'wellbore_name', 'wellbore.name',
+        'jobName', 'job_name', 'job.name', 'job', 'activeJob', 'active_job',
+    ];
     for (const src of sources) {
         if (!src || typeof src !== 'object') continue;
         for (const key of keys) {
@@ -265,7 +274,7 @@ function pickWellName(ws, ...sources) {
                 if (text) return text;
             }
         }
-        for (const prop of ['data', 'channelData', 'dataItems']) {
+        for (const prop of ['data', 'channelData', 'channelValues', 'dataItems']) {
             if (!Array.isArray(src[prop])) continue;
             for (const row of src[prop]) {
                 if (!row || typeof row !== 'object') continue;
@@ -288,15 +297,34 @@ function pickWellName(ws, ...sources) {
     return '';
 }
 
+function pickWellPayload(...sources) {
+    const keys = ['well', 'activeWell', 'active_well', 'currentWell', 'current_well', 'wellManagement', 'well_management', 'wellRun', 'well_run'];
+    for (const src of sources) {
+        if (!src || typeof src !== 'object') continue;
+        for (const key of keys) {
+            const value = src[key];
+            if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
+        }
+        const directName = src.wellName || src.well_name || src.currentWellName || src.current_well_name || src.name;
+        if (directName && (src.service || src.serviceType || src.field || src.operator || src.startedAt || src.started_at)) return { ...src };
+        if (src.values && typeof src.values === 'object') {
+            const nested = pickWellPayload(src.values);
+            if (nested) return nested;
+        }
+    }
+    return null;
+}
+
 function eventListWithWellName(ws, body = {}, msg = {}) {
     const events = Array.isArray(body.events) ? [...body.events] : (Array.isArray(msg.events) ? [...msg.events] : []);
+    const wellPayload = pickWellPayload(body, msg, msg.body, body.batch, msg.batch) || {};
     const wellName = pickWellName(ws, body, msg, msg.body, body.batch, msg.batch);
     if (wellName) {
         const ts = body.ts || msg.ts || new Date().toISOString();
         const alreadyStarted = events.some((ev) => ev && ev.type === 'well.started');
-        events.push({ ts, type: 'activity', payload: { label: 'ACTIVE WELL', job: wellName, wellName } });
+        events.push({ ts, type: 'activity', payload: { label: 'ACTIVE WELL', job: wellName, wellName, ...wellPayload } });
         if (!alreadyStarted) {
-            events.push({ ts, type: 'well.started', payload: { wellId: wellName, name: wellName, status: 'workover' } });
+            events.push({ ts, type: 'well.started', payload: { wellId: wellName, name: wellName, status: 'active', ...wellPayload } });
         }
     }
     return events;

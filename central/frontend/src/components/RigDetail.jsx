@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     Box, Grid, Paper, Typography, Stack, Button, Link as MLink, Alert,
     Tabs, Tab, IconButton, Tooltip, Divider, Menu, MenuItem, ListItemIcon,
+    Dialog, DialogTitle, DialogContent, DialogActions, TextField, Chip,
 } from '@mui/material';
-import { ArrowBack, ExpandMore, ExpandLess, Refresh, Palette, Logout, VolumeOff, GridView, ShowChart, Storage, Speed, Assignment, NotificationsNone, Description, Healing, Settings } from '@mui/icons-material';
+import { ArrowBack, ExpandMore, ExpandLess, Refresh, Palette, Logout, VolumeOff, GridView, ShowChart, Storage, Speed, Assignment, NotificationsNone, Description, Healing, Settings, ChatBubbleOutline, Send } from '@mui/icons-material';
 import { api, phaseColor } from '../api';
 import { socket } from '../socket';
 import { StatusChip, HealthBar, PriorityChip, fmtAgo, fmtNum } from './common';
@@ -42,6 +43,102 @@ const HMI_MENU_META = {
     maintenance: { menuLabel: 'Maintenance', icon: <Healing fontSize="small" /> },
     settings: { menuLabel: 'Settings', icon: <Settings fontSize="small" /> },
 };
+const MESSAGE_TYPES = ['General', 'Instruction', 'Warning', 'Safety', 'Maintenance', 'Sensor Check', 'ETP / Network'];
+
+function RigMessageButton({ rig }) {
+    const [open, setOpen] = useState(false);
+    const [messageType, setMessageType] = useState(() => localStorage.getItem(`crmf-message-type-${rig?.rigId || 'rig'}`) || 'General');
+    const [text, setText] = useState('');
+    const [rows, setRows] = useState([]);
+    const [error, setError] = useState('');
+    const [sending, setSending] = useState(false);
+    const load = useCallback(() => {
+        if (!rig?.rigId) return;
+        api.rigMessages(rig.rigId, 50).then(setRows).catch((e) => setError(e?.response?.data?.error || 'failed to load messages'));
+    }, [rig?.rigId]);
+    useEffect(() => {
+        if (!open) return undefined;
+        load();
+        const onUpdate = (row) => {
+            if (row?.targetRigId === rig?.rigId) setRows((prev) => [row, ...prev.filter((m) => m.messageId !== row.messageId)].slice(0, 50));
+        };
+        socket.on('rig_message_update', onUpdate);
+        return () => socket.off('rig_message_update', onUpdate);
+    }, [open, load, rig?.rigId]);
+    const chooseType = (type) => {
+        setMessageType(type);
+        localStorage.setItem(`crmf-message-type-${rig?.rigId || 'rig'}`, type);
+    };
+    const sendMessage = async () => {
+        setSending(true); setError('');
+        try {
+            const row = await api.sendRigMessage(rig.rigId, { messageType, messageText: text });
+            setRows((prev) => [row, ...prev.filter((m) => m.messageId !== row.messageId)]);
+            setText('');
+        } catch (e) {
+            setError(e?.response?.data?.error || 'send failed');
+        } finally {
+            setSending(false);
+        }
+    };
+    const retry = async (messageId) => {
+        try {
+            const row = await api.retryRigMessage(rig.rigId, messageId);
+            setRows((prev) => [row, ...prev.filter((m) => m.messageId !== row.messageId)]);
+        } catch (e) {
+            setError(e?.response?.data?.error || 'retry failed');
+        }
+    };
+    return (
+        <>
+            <Button
+                variant="outlined"
+                startIcon={<ChatBubbleOutline fontSize="small" />}
+                onClick={() => setOpen(true)}
+                sx={{ minWidth: 190, borderColor: 'rgba(56,189,248,.42)', color: '#38bdf8', fontWeight: 900, bgcolor: 'rgba(15,23,42,.58)', '&:hover': { borderColor: '#38bdf8', bgcolor: 'rgba(56,189,248,.10)' } }}
+            >
+                Central Message Centre
+            </Button>
+            <Dialog open={open} onClose={() => setOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { bgcolor: '#172235', color: 'white', border: '1px solid rgba(56,189,248,.25)' } }}>
+                <DialogTitle sx={{ fontWeight: 900, color: 'primary.main' }}>Central Control Room Message - {rig?.rigId}</DialogTitle>
+                <DialogContent>
+                    {error && <Alert severity="error" sx={{ mb: 1.5 }}>{error}</Alert>}
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>
+                        {MESSAGE_TYPES.map((type) => (
+                            <Chip key={type} label={type} onClick={() => chooseType(type)} color={type === messageType ? 'primary' : 'default'} variant={type === messageType ? 'filled' : 'outlined'} />
+                        ))}
+                    </Stack>
+                    <TextField
+                        fullWidth multiline minRows={3} value={text}
+                        onChange={(e) => setText(e.target.value.slice(0, 1000))}
+                        placeholder="Type message for this rig only..."
+                        helperText={`${text.length}/1000 characters`}
+                    />
+                    <Typography variant="subtitle2" fontWeight={900} sx={{ mt: 2, mb: 1 }}>Message History</Typography>
+                    <Stack spacing={1} sx={{ maxHeight: 260, overflow: 'auto' }}>
+                        {rows.length ? rows.map((m) => (
+                            <Paper key={m.messageId} variant="outlined" sx={{ p: 1.25, bgcolor: 'rgba(15,23,42,.72)' }}>
+                                <Stack direction="row" justifyContent="space-between" spacing={1}>
+                                    <Typography fontWeight={900}>{m.messageType} · {m.messageText}</Typography>
+                                    <Chip size="small" label={m.status} color={m.status === 'acknowledged' ? 'success' : m.status === 'failed' ? 'error' : 'info'} />
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary">
+                                    Sent {m.sentAt ? new Date(m.sentAt).toLocaleString() : '--'} by {m.senderDisplay || m.senderUsername}
+                                    {m.acknowledgedAt ? ` · Ack ${new Date(m.acknowledgedAt).toLocaleString()} by ${m.acknowledgedBy || 'edge'}` : ''}
+                                </Typography>
+                                {m.status === 'failed' && <Button size="small" onClick={() => retry(m.messageId)}>Retry</Button>}
+                            </Paper>
+                        )) : <Typography color="text.secondary">No messages yet.</Typography>}
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOpen(false)}>Close</Button>
+                    <Button variant="contained" startIcon={<Send />} disabled={sending || !text.trim()} onClick={sendMessage}>Send Message</Button>
+                </DialogActions>
+            </Dialog>
+        </>
+    );
+}
 
 function findMetric(rig, metric, fallbackLabel) {
     const keyMetrics = rig?.keyMetrics || [];
@@ -137,6 +234,7 @@ function EdgeTwinTopBar({ rig, onBack, showKpiToggle, kpiOpen, onToggleKpis }) {
                         <Typography variant="caption" color="text.secondary" fontWeight={700}>{rig?.rigId || 'AHWR-50-TWIN'}</Typography>
                     </Box>
                 </Stack>
+                <RigMessageButton rig={rig} />
                 <Box sx={{ flexGrow: 1 }} />
                 <Stack direction="row" spacing={0.75} alignItems="center">
                     <OnlineRigSelector />
@@ -204,7 +302,7 @@ function RigStatusRow({ rig, tab, onTabChange }) {
     const holeDepth = findMetric(rig, 'drilling.hole_depth', 'HOLE DEPTH');
     const bitDepth = findMetric(rig, 'drilling.bit_depth', 'BIT DEPTH');
     const liveBitDepth = live?.drilling?.bit_depth;
-    const wellName = live?._activity?.job || live?.well?.name || live?.wellName || live?.well_name || rig?.activeJob || 'no job';
+    const wellName = live?.well?.name || live?.wellName || live?.well_name || live?._activity?.wellName || live?._activity?.job || rig?.activeJob || 'no job';
     return (
         <Paper sx={{ px: 1.5, py: 0.75, mb: 1, borderRadius: 1, bgcolor: '#172235', borderColor: 'rgba(62,166,255,0.18)' }} variant="outlined">
             <Stack direction="row" spacing={1} alignItems="stretch" flexWrap={{ xs: 'wrap', lg: 'nowrap' }} useFlexGap>

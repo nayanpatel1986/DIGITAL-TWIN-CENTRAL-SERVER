@@ -53,6 +53,28 @@ CREATE TABLE IF NOT EXISTS rig_latest (
     values     JSONB NOT NULL DEFAULT '{}'::jsonb      -- { "measurement.field": number, ... }
 );
 
+-- Operator messages from Central Control Room to a specific Edge rig app.
+-- This is UI/database/WebSocket only; no PLC write path is involved.
+CREATE TABLE IF NOT EXISTS rig_messages (
+    message_id       TEXT PRIMARY KEY,
+    target_rig_id    TEXT NOT NULL REFERENCES rigs(rig_id) ON DELETE CASCADE,
+    target_rig_name  TEXT,
+    message_type     TEXT NOT NULL DEFAULT 'General',
+    message_text     TEXT NOT NULL,
+    sender_username  TEXT NOT NULL,
+    sender_display   TEXT,
+    sent_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status           TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','delivered','acknowledged','failed')),
+    delivered_at     TIMESTAMPTZ,
+    acknowledged_at  TIMESTAMPTZ,
+    acknowledged_by  TEXT,
+    failed_at        TIMESTAMPTZ,
+    failure_reason   TEXT,
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS rig_messages_target_idx ON rig_messages(target_rig_id, sent_at DESC);
+
 -- ---------------------------------------------------------------------
 -- Telemetry point (proposal §6.2) — TimescaleDB hypertable, long format
 -- ---------------------------------------------------------------------
@@ -354,9 +376,15 @@ CREATE TABLE IF NOT EXISTS wells (
     name           TEXT NOT NULL,
     uwi            TEXT,                             -- unique well identifier / API no.
     well_type      TEXT,                             -- production|injection|exploration|appraisal|workover
+    service_type   TEXT,
     status         TEXT NOT NULL DEFAULT 'planned',  -- planned|drilling|completed|producing|workover|suspended|abandoned
     field          TEXT,
     asset_unit     TEXT,
+    country        TEXT,
+    company_man    TEXT,
+    toolpusher     TEXT,
+    objective      TEXT,
+    location       TEXT,
     latitude       DOUBLE PRECISION,
     longitude      DOUBLE PRECISION,
     spud_date      DATE,
@@ -379,6 +407,12 @@ CREATE TABLE IF NOT EXISTS well_runs (
     well_id     TEXT REFERENCES wells(well_id) ON DELETE CASCADE,
     rig_id      TEXT REFERENCES rigs(rig_id) ON DELETE SET NULL,
     job_no      TEXT,
+    service     TEXT,
+    started_by  TEXT,
+    joints      INTEGER,
+    depth_delta DOUBLE PRECISION,
+    productive_sec DOUBLE PRECISION,
+    npt_sec     DOUBLE PRECISION,
     started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at    TIMESTAMPTZ,
     summary     TEXT

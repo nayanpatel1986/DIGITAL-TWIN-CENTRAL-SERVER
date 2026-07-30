@@ -59,7 +59,7 @@ function liveize(row) {
         metricCount: row.metric_count,
         syncLagSec: lagSec,
         lastDataAt: row.last_data_at,
-        activeJob: row.active_job || row.current_well_name || row.current_well_id,
+        activeJob: row.active_job,
         activeActivity: row.active_activity,
         alarm: {
             active: row.alarm_active, unack: row.alarm_unack,

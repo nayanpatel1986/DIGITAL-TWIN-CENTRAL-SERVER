@@ -126,19 +126,52 @@ function cleanWellText(v) {
     return s && s !== '--' ? s : '';
 }
 
+function cleanStatus(v) {
+    const text = cleanWellText(v).toLowerCase();
+    if (!text) return '';
+    if (['active', 'started', 'inprogress', 'in_progress', 'running'].includes(text.replace(/[^a-z0-9]/g, ''))) return 'active';
+    if (['complete', 'completed', 'done', 'ended'].includes(text)) return 'completed';
+    return text;
+}
+
+function firstNumber(obj, keys) {
+    for (const key of keys) {
+        const n = Number(obj && obj[key]);
+        if (Number.isFinite(n)) return n;
+    }
+    return null;
+}
+
+function firstTimestamp(obj, keys) {
+    for (const key of keys) {
+        const ts = coerceTsIso(obj && obj[key]);
+        if (ts) return ts;
+    }
+    return '';
+}
+
 function isWellMetric(metric) {
     const s = String(metric || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return ['well', 'wellname', 'job', 'jobname', 'activejob'].includes(s)
+    return ['well', 'wellid', 'wellname', 'wellbore', 'wellborename', 'job', 'jobname', 'activejob', 'currentwell', 'currentwellname'].includes(s)
         || s.endsWith('wellname')
+        || s.endsWith('wellid')
+        || s.endsWith('wellbore')
+        || s.endsWith('wellborename')
         || s.endsWith('jobname')
         || s.includes('wellname')
+        || s.includes('currentwell')
         || s.includes('activejob');
 }
 
 function findWellNameInSnapshot(snap) {
     const values = snap && snap.values;
     if (!values || typeof values !== 'object') return '';
-    const keys = ['wellName', 'well_name', 'well.name', 'well', 'jobName', 'job_name', 'job.name', 'job', 'activeJob', 'active_job'];
+    const keys = [
+        'wellName', 'well_name', 'well.name', 'well', 'wellId', 'well_id',
+        'currentWell', 'current_well', 'currentWellName', 'current_well_name',
+        'wellboreName', 'wellbore_name', 'wellbore.name',
+        'jobName', 'job_name', 'job.name', 'job', 'activeJob', 'active_job',
+    ];
     for (const key of keys) {
         const text = cleanWellText(values[key]);
         if (text) return text;
@@ -153,7 +186,12 @@ function findWellNameInSnapshot(snap) {
 }
 
 function findWellNameInBatch(batch, channels) {
-    const keys = ['wellName', 'well_name', 'well', 'jobName', 'job_name', 'job', 'activeJob', 'active_job'];
+    const keys = [
+        'wellName', 'well_name', 'well', 'wellId', 'well_id',
+        'currentWell', 'current_well', 'currentWellName', 'current_well_name',
+        'wellboreName', 'wellbore_name',
+        'jobName', 'job_name', 'job', 'activeJob', 'active_job',
+    ];
     for (const key of keys) {
         const text = cleanWellText(batch && batch[key]);
         if (text) return text;
@@ -173,28 +211,88 @@ function firstText(obj, keys) {
     return '';
 }
 
-function normalizeWellEvent(ev) {
-    const p = (ev && ev.payload && typeof ev.payload === 'object') ? ev.payload : {};
-    const wellId = firstText(p, ['wellId', 'well_id', 'uwi', 'id', 'name', 'wellName', 'well_name', 'job', 'jobName', 'job_name', 'activeJob', 'active_job']);
-    const name = firstText(p, ['name', 'wellName', 'well_name', 'job', 'jobName', 'job_name', 'activeJob', 'active_job', 'wellId', 'well_id', 'uwi', 'id']) || wellId;
+function mergeWellPayload(...sources) {
+    const merged = {};
+    for (const src of sources) {
+        if (src && typeof src === 'object' && !Array.isArray(src)) Object.assign(merged, src);
+    }
+    return merged;
+}
+
+function nestedWellPayload(src) {
+    if (!src || typeof src !== 'object') return null;
+    const keys = [
+        'well', 'activeWell', 'active_well', 'currentWell', 'current_well',
+        'wellManagement', 'well_management', 'wellRun', 'well_run',
+    ];
+    for (const key of keys) {
+        const value = src[key];
+        if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    }
+    return null;
+}
+
+function normalizeWellPayload(payload) {
+    const p = payload || {};
+    const nested = nestedWellPayload(p);
+    const data = nested ? mergeWellPayload(p, nested) : p;
+    const wellId = firstText(data, ['wellId', 'well_id', 'uwi', 'id', 'name', 'wellName', 'well_name', 'currentWell', 'current_well', 'currentWellName', 'current_well_name', 'wellboreName', 'wellbore_name', 'job', 'jobName', 'job_name', 'activeJob', 'active_job']);
+    const name = firstText(data, ['name', 'wellName', 'well_name', 'currentWell', 'current_well', 'currentWellName', 'current_well_name', 'wellboreName', 'wellbore_name', 'job', 'jobName', 'job_name', 'activeJob', 'active_job', 'wellId', 'well_id', 'uwi', 'id']) || wellId;
     return {
         wellId,
         name,
-        uwi: firstText(p, ['uwi', 'api', 'apiNo', 'api_no']),
-        field: firstText(p, ['field', 'area']),
-        assetUnit: firstText(p, ['assetUnit', 'asset_unit', 'asset']),
-        wellType: firstText(p, ['wellType', 'well_type', 'type']) || 'workover',
-        operator: firstText(p, ['operator']),
-        blockLease: firstText(p, ['blockLease', 'block_lease', 'block']),
-        status: firstText(p, ['status']),
-        jobNo: firstText(p, ['jobNo', 'job_no', 'job', 'jobName', 'job_name']) || name || wellId,
-        totalDepth: Number.isFinite(Number(p.totalDepth ?? p.total_depth ?? p.td)) ? Number(p.totalDepth ?? p.total_depth ?? p.td) : null,
-        latitude: Number.isFinite(Number(p.latitude ?? p.lat)) ? Number(p.latitude ?? p.lat) : null,
-        longitude: Number.isFinite(Number(p.longitude ?? p.lon ?? p.lng)) ? Number(p.longitude ?? p.lon ?? p.lng) : null,
-        spudDate: firstText(p, ['spudDate', 'spud_date']),
-        tdDate: firstText(p, ['tdDate', 'td_date', 'completedAt', 'completed_at']),
-        notes: firstText(p, ['notes', 'summary']),
+        uwi: firstText(data, ['uwi', 'api', 'apiNo', 'api_no']),
+        field: firstText(data, ['field', 'area']),
+        assetUnit: firstText(data, ['assetUnit', 'asset_unit', 'asset']),
+        wellType: firstText(data, ['wellType', 'well_type', 'type']) || 'workover',
+        service: firstText(data, ['service', 'serviceType', 'service_type', 'wellService', 'well_service']),
+        operator: firstText(data, ['operator']),
+        blockLease: firstText(data, ['blockLease', 'block_lease', 'block']),
+        country: firstText(data, ['country']),
+        companyMan: firstText(data, ['companyMan', 'company_man']),
+        toolpusher: firstText(data, ['toolpusher', 'toolPusher', 'tool_pusher']),
+        objective: firstText(data, ['objective']),
+        location: firstText(data, ['location', 'blockLocation', 'block_location']),
+        status: cleanStatus(data.status) || cleanStatus(data.state),
+        jobNo: firstText(data, ['jobNo', 'job_no', 'jobNumber', 'job_number', 'job', 'jobName', 'job_name', 'currentWellName', 'current_well_name']) || name || wellId,
+        startedAt: firstTimestamp(data, ['startedAt', 'started_at', 'startTime', 'start_time', 'start', 'started']),
+        startedBy: firstText(data, ['startedBy', 'started_by', 'user', 'username', 'createdBy', 'created_by']),
+        totalDepth: firstNumber(data, ['totalDepth', 'total_depth', 'plannedTd', 'plannedTD', 'planned_td', 'td']),
+        joints: firstNumber(data, ['joints', 'jointCount', 'joint_count']),
+        depthDelta: firstNumber(data, ['depthDelta', 'depth_delta', 'depthChange', 'depth_change']),
+        productiveSec: firstNumber(data, ['productiveSec', 'productive_sec', 'productiveSeconds', 'productive_seconds']),
+        nptSec: firstNumber(data, ['nptSec', 'npt_sec', 'nptSeconds', 'npt_seconds']),
+        latitude: firstNumber(data, ['latitude', 'lat']),
+        longitude: firstNumber(data, ['longitude', 'lon', 'lng']),
+        spudDate: firstText(data, ['spudDate', 'spud_date']),
+        tdDate: firstText(data, ['tdDate', 'td_date', 'completedAt', 'completed_at']),
+        notes: firstText(data, ['notes', 'summary']),
     };
+}
+
+function findWellPayloadInSource(src) {
+    if (!src || typeof src !== 'object') return null;
+    const nested = nestedWellPayload(src);
+    if (nested) return mergeWellPayload(src, nested);
+    const well = normalizeWellPayload(src);
+    return well.wellId || well.name ? src : null;
+}
+
+function findWellPayloadInBatch(batch, channels) {
+    const top = findWellPayloadInSource(batch);
+    if (top) return top;
+    for (const snap of channels || []) {
+        const fromSnap = findWellPayloadInSource(snap);
+        if (fromSnap) return fromSnap;
+        const fromValues = findWellPayloadInSource(snap && snap.values);
+        if (fromValues) return fromValues;
+    }
+    return null;
+}
+
+function normalizeWellEvent(ev) {
+    const p = (ev && ev.payload && typeof ev.payload === 'object') ? ev.payload : {};
+    return normalizeWellPayload(p);
 }
 
 async function upsertWellFromEvent(client, rigId, well, statusOverride, assignRig) {
@@ -202,25 +300,35 @@ async function upsertWellFromEvent(client, rigId, well, statusOverride, assignRi
     const rigRow = (await client.query(
         'SELECT asset_unit, field, latitude, longitude FROM rigs WHERE rig_id = $1', [rigId])).rows[0] || {};
     await client.query(
-        `INSERT INTO wells (well_id, name, uwi, well_type, status, field, asset_unit, latitude, longitude, total_depth, operator, block_lease, current_rig_id, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        `INSERT INTO wells
+           (well_id, name, uwi, well_type, service_type, status, field, asset_unit, country,
+            company_man, toolpusher, objective, location, latitude, longitude, total_depth,
+            operator, block_lease, current_rig_id, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
          ON CONFLICT (well_id) DO UPDATE SET
            name = COALESCE(EXCLUDED.name, wells.name),
            uwi = COALESCE(EXCLUDED.uwi, wells.uwi),
            well_type = COALESCE(EXCLUDED.well_type, wells.well_type),
+           service_type = COALESCE(EXCLUDED.service_type, wells.service_type),
            status = EXCLUDED.status,
            field = COALESCE(EXCLUDED.field, wells.field),
            asset_unit = COALESCE(EXCLUDED.asset_unit, wells.asset_unit),
+           country = COALESCE(EXCLUDED.country, wells.country),
+           company_man = COALESCE(EXCLUDED.company_man, wells.company_man),
+           toolpusher = COALESCE(EXCLUDED.toolpusher, wells.toolpusher),
+           objective = COALESCE(EXCLUDED.objective, wells.objective),
+           location = COALESCE(EXCLUDED.location, wells.location),
            latitude = COALESCE(EXCLUDED.latitude, wells.latitude),
            longitude = COALESCE(EXCLUDED.longitude, wells.longitude),
            total_depth = COALESCE(EXCLUDED.total_depth, wells.total_depth),
            operator = COALESCE(EXCLUDED.operator, wells.operator),
            block_lease = COALESCE(EXCLUDED.block_lease, wells.block_lease),
-           current_rig_id = CASE WHEN $15::boolean THEN EXCLUDED.current_rig_id ELSE wells.current_rig_id END,
+           current_rig_id = CASE WHEN $21::boolean THEN EXCLUDED.current_rig_id ELSE wells.current_rig_id END,
            notes = COALESCE(EXCLUDED.notes, wells.notes),
            updated_at = now()`,
-        [well.wellId, well.name || well.wellId, well.uwi || null, well.wellType || 'workover', statusOverride || well.status || 'workover',
+        [well.wellId, well.name || well.wellId, well.uwi || null, well.wellType || 'workover', well.service || null, statusOverride || well.status || 'workover',
          well.field || rigRow.field || null, well.assetUnit || rigRow.asset_unit || null,
+         well.country || null, well.companyMan || null, well.toolpusher || null, well.objective || null, well.location || null,
          well.latitude ?? rigRow.latitude ?? null, well.longitude ?? rigRow.longitude ?? null,
          well.totalDepth, well.operator || null, well.blockLease || null, assignRig ? rigId : null, well.notes || null, !!assignRig]
     );
@@ -232,7 +340,7 @@ async function startWellForRig(client, rigId, ev) {
     if (!well.wellId) return null;
     const wellId = await upsertWellFromEvent(client, rigId, well, well.status || 'workover', true);
     const jobNo = well.jobNo || well.name || wellId;
-    const startedAt = coerceTsIso(ev.ts) || new Date().toISOString();
+    const startedAt = well.startedAt || coerceTsIso(ev.ts) || new Date().toISOString();
     await client.query(
         `UPDATE well_runs SET ended_at = COALESCE(ended_at, $3)
          WHERE rig_id = $1 AND ended_at IS NULL AND well_id <> $2`,
@@ -243,12 +351,28 @@ async function startWellForRig(client, rigId, ev) {
         [rigId, wellId])).rows[0];
     if (!open) {
         await client.query(
-            'INSERT INTO well_runs (well_id, rig_id, job_no, started_at) VALUES ($1,$2,$3,$4)',
-            [wellId, rigId, jobNo, startedAt]
+            `INSERT INTO well_runs
+               (well_id, rig_id, job_no, service, started_by, joints, depth_delta, productive_sec, npt_sec, started_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [wellId, rigId, jobNo, well.service || null, well.startedBy || null, well.joints, well.depthDelta, well.productiveSec, well.nptSec, startedAt]
+        );
+    } else {
+        await client.query(
+            `UPDATE well_runs SET
+               job_no = COALESCE($3, job_no),
+               service = COALESCE($4, service),
+               started_by = COALESCE($5, started_by),
+               joints = COALESCE($6, joints),
+               depth_delta = COALESCE($7, depth_delta),
+               productive_sec = COALESCE($8, productive_sec),
+               npt_sec = COALESCE($9, npt_sec),
+               started_at = LEAST(started_at, $10)
+             WHERE id = $1 AND rig_id = $2`,
+            [open.id, rigId, jobNo, well.service || null, well.startedBy || null, well.joints, well.depthDelta, well.productiveSec, well.nptSec, startedAt]
         );
     }
     await client.query('UPDATE wells SET current_rig_id = NULL, updated_at = now() WHERE current_rig_id = $1 AND well_id <> $2', [rigId, wellId]);
-    await client.query('UPDATE wells SET current_rig_id = $2, status = $3, updated_at = now() WHERE well_id = $1', [wellId, rigId, well.status || 'workover']);
+    await client.query('UPDATE wells SET current_rig_id = $2, status = $3, updated_at = now() WHERE well_id = $1', [wellId, rigId, well.status || 'active']);
     return { wellId, name: well.name || wellId, jobNo };
 }
 
@@ -345,7 +469,20 @@ async function ingestBatch({ rigId, token, schemaVersion }, batch) {
     const seq = Number.isSafeInteger(Number(batch.seq)) ? Number(batch.seq) : null;
 
     const channels = Array.isArray(batch.channels) ? batch.channels : [];
-    const events = Array.isArray(batch.events) ? batch.events : [];
+    let events = Array.isArray(batch.events) ? batch.events : [];
+    const wellPayload = findWellPayloadInBatch(batch, channels);
+    const normalizedSnapshotWell = wellPayload ? normalizeWellPayload(wellPayload) : null;
+    const hasIncomingWellLifecycleEvent = events.some((ev) => ev && ['well.created', 'well.updated', 'well.started', 'well.completed'].includes(ev.type));
+    if (!hasIncomingWellLifecycleEvent && normalizedSnapshotWell && normalizedSnapshotWell.wellId) {
+        events = [
+            ...events,
+            {
+                ts: normalizedSnapshotWell.startedAt || batch.createdAt || new Date().toISOString(),
+                type: normalizedSnapshotWell.status === 'completed' ? 'well.completed' : 'well.started',
+                payload: { ...wellPayload, ...normalizedSnapshotWell },
+            },
+        ];
+    }
     const hasWellLifecycleEvent = events.some((ev) => ev && ['well.created', 'well.updated', 'well.started', 'well.completed'].includes(ev.type));
 
     const client = await pool.connect();

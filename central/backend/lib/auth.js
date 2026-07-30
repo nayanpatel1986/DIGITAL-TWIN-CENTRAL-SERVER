@@ -113,13 +113,32 @@ function roleMeets(userRole, min) {
     return (ROLE_RANK[userRole] || 0) >= (ROLE_RANK[min] || 99);
 }
 
-// Socket.IO handshake auth (mirrors the edge app's token-in-auth pattern).
+// Socket.IO handshake auth.
+// - Portal browsers use the normal JWT.
+// - Rig edge servers use { edge:true, deviceId, token } with the same read-only
+//   device credential as ingest. This is for operator messages only; no PLC path.
 function socketAuth(socket, next) {
-    const token = socket.handshake.auth?.token;
-    const user = token && verify(token);
-    if (!user) return next(new Error('unauthorized'));
-    socket.user = user;
-    next();
+    (async () => {
+        const auth = socket.handshake.auth || {};
+        if (auth.edge) {
+            const deviceId = String(auth.deviceId || '').trim();
+            const token = String(auth.token || '').trim();
+            if (!deviceId || !token) return next(new Error('unauthorized'));
+            const shared = process.env.INGEST_TOKEN || 'AHWR-ETP-2026';
+            const { rows } = await query('SELECT device_token FROM rigs WHERE rig_id = $1', [deviceId]);
+            const expected = rows[0]?.device_token || shared;
+            if (token !== shared && token !== expected) return next(new Error('unauthorized'));
+            socket.edgeRigId = deviceId;
+            socket.clientType = 'edge';
+            return next();
+        }
+        const token = auth.token;
+        const user = token && verify(token);
+        if (!user) return next(new Error('unauthorized'));
+        socket.user = user;
+        socket.clientType = 'portal';
+        next();
+    })().catch(() => next(new Error('unauthorized')));
 }
 
 const hash = (pw) => bcrypt.hashSync(pw, 10);

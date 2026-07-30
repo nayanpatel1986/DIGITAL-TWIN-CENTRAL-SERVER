@@ -3,8 +3,8 @@
 // CRMF — Centralised Rig Monitoring Facility — backend
 // Ingestion endpoint (edge store-and-forward) + fleet portal API + live updates.
 //
-// MONITORING-ONLY: this service only ever RECEIVES data from rig-edge systems.
-// There is no path from here back to any rig or PLC, by design.
+// MONITORING-ONLY: telemetry/control remains read-only. The only outbound rig
+// path is an operator message notification to the Edge UI; it never writes PLC.
 //
 // API VERSIONING (audit #30): the fleet API is mounted at BOTH /api (the
 // existing, unversioned default — kept working) and /api/v1 (the versioned alias
@@ -44,6 +44,7 @@ const settings = require('./lib/settings');
 const etp20 = require('./lib/etp20');
 const etp20Server = require('./lib/etp20Server');
 const presence = require('./lib/presence');
+const messages = require('./lib/messages');
 
 const PORT = Number(process.env.PORT || 6000);
 const METRICS_ENABLED = process.env.METRICS_ENABLED !== 'false'; // default ON
@@ -103,8 +104,37 @@ const io = new Server(server, {
 });
 io.use(auth.socketAuth);
 io.on('connection', (socket) => {
+    if (socket.clientType === 'edge' && socket.edgeRigId) {
+        const rigRoom = `edge:${socket.edgeRigId}`;
+        socket.join(rigRoom);
+        console.log(`[messages] edge connected: ${socket.edgeRigId}`);
+        messages.pendingForRig(socket.edgeRigId)
+            .then((rows) => { if (rows.length) socket.emit('central_messages:batch', rows); })
+            .catch((e) => console.warn('[messages] pending delivery failed:', e.message));
+
+        socket.on('edge_message_delivered', async (payload = {}) => {
+            try {
+                const row = await messages.markDelivered(payload.messageId, socket.edgeRigId);
+                if (row) io.emit('rig_message_update', row);
+            } catch (e) { console.warn('[messages] delivery ack failed:', e.message); }
+        });
+
+        socket.on('edge_message_ack', async (payload = {}) => {
+            try {
+                const row = await messages.acknowledge(payload.messageId, socket.edgeRigId, payload.acknowledgedBy);
+                if (row) io.emit('rig_message_update', row);
+            } catch (e) { console.warn('[messages] acknowledge failed:', e.message); }
+        });
+        return;
+    }
     fleet.getFleetSummary().then((s) => socket.emit('fleet_summary', s)).catch(() => {});
 });
+
+function emitRigMessage(row) {
+    if (!row) return;
+    io.to(`edge:${row.targetRigId}`).emit('central_message', row);
+    io.emit('rig_message_update', row);
+}
 
 // --------------------------------------------------------------------
 // INGEST — accepts gzipped store-and-forward batches from the edge sync agent.
@@ -331,6 +361,17 @@ function buildApiRouter() {
     // width-proportional activity bar. Read-only, default 24h window.
     r.get('/rigs/:id/activity', wrap((req) =>
         activity.getActivity(req.params.id, Number(req.query.hours) || 24)));
+    r.get('/rigs/:id/messages', wrap((req) => messages.list(req.params.id, req.query.limit)));
+    r.post('/rigs/:id/messages', requireRoleAudited('operator'), wrap(async (req) => {
+        const row = await messages.create(req.params.id, req.body, req.user);
+        emitRigMessage(row);
+        return row;
+    }));
+    r.post('/rigs/:id/messages/:messageId/retry', requireRoleAudited('operator'), wrap(async (req) => {
+        const row = await messages.retry(req.params.messageId, req.params.id);
+        emitRigMessage(row);
+        return row;
+    }));
     r.get('/alarms', wrap((req) => fleet.getAlarms({ priority: req.query.priority })));
     r.get('/data-quality', wrap(() => fleet.getDataQuality()));
     r.get('/workover', wrap((req) => gov.getWorkover({ hours: req.query.hours })));

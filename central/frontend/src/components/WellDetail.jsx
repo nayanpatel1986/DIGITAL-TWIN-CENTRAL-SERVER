@@ -13,6 +13,7 @@ import ErrorBoundary from './ErrorBoundary';
 
 // Well lifecycle status palette (local — STATUS_COLOR is rig-liveness oriented).
 const WELL_STATUS_COLOR = {
+    active: '#22c55e',
     planned: '#64748b',
     drilling: '#38bdf8',
     completed: '#22d3ee',
@@ -113,10 +114,14 @@ export default function WellDetail() {
             <Paper sx={{ p: 2, mb: 2 }}>
                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center" mb={2}>
                     <Typography variant="h6" sx={{ fontFamily: 'monospace' }}>{well.uwi || well.wellId}</Typography>
-                    {well.wellType && <Chip size="small" variant="outlined" label={well.wellType} />}
+                    {(well.serviceType || well.wellType) && <Chip size="small" variant="outlined" label={well.serviceType || well.wellType} />}
                     <WellStatusChip status={well.status} />
                 </Stack>
                 <Grid container spacing={2}>
+                    <Grid item xs={6} sm={4} md={3}><HeaderField label="Location" value={well.location || well.blockLease || 'â€”'} /></Grid>
+                    <Grid item xs={6} sm={4} md={3}><HeaderField label="Country" value={well.country || 'â€”'} /></Grid>
+                    <Grid item xs={6} sm={4} md={3}><HeaderField label="Company man" value={well.companyMan || 'â€”'} /></Grid>
+                    <Grid item xs={6} sm={4} md={3}><HeaderField label="Toolpusher" value={well.toolpusher || 'â€”'} /></Grid>
                     <Grid item xs={6} sm={4} md={3}><HeaderField label="Field" value={well.field || '—'} /></Grid>
                     <Grid item xs={6} sm={4} md={3}><HeaderField label="Asset unit" value={well.assetUnit || '—'} /></Grid>
                     <Grid item xs={6} sm={4} md={3}><HeaderField label="Operator" value={well.operator || '—'} /></Grid>
@@ -140,6 +145,12 @@ export default function WellDetail() {
                         <Typography variant="body2">{well.notes}</Typography>
                     </Box>
                 )}
+                {well.objective && (
+                    <Box sx={{ mt: 2 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 10 }}>Objective</Typography>
+                        <Typography variant="body2">{well.objective}</Typography>
+                    </Box>
+                )}
             </Paper>
 
             {/* RUNS TABLE. */}
@@ -158,9 +169,13 @@ export default function WellDetail() {
                         <TableHead><TableRow>
                             <TableCell>Rig</TableCell>
                             <TableCell>Job</TableCell>
+                            <TableCell>Service</TableCell>
+                            <TableCell>Started By</TableCell>
                             <TableCell>Start</TableCell>
                             <TableCell>End</TableCell>
                             <TableCell align="right">Duration</TableCell>
+                            <TableCell align="right">Depth Delta</TableCell>
+                            <TableCell align="right">Joints</TableCell>
                             <TableCell align="center">State</TableCell>
                         </TableRow></TableHead>
                         <TableBody>
@@ -170,9 +185,13 @@ export default function WellDetail() {
                                         <MLink component="button" type="button" onClick={() => nav('/rigs/' + r.rigId)} sx={{ fontFamily: 'monospace', fontWeight: 700, cursor: 'pointer' }}>{r.rigId}</MLink>
                                     </TableCell>
                                     <TableCell sx={{ fontFamily: 'monospace' }}>{r.jobNo || '—'}</TableCell>
+                                    <TableCell>{r.service || '—'}</TableCell>
+                                    <TableCell>{r.startedBy || '—'}</TableCell>
                                     <TableCell>{fmtDate(r.startedAt)}</TableCell>
                                     <TableCell>{r.active ? '—' : fmtDate(r.endedAt)}</TableCell>
                                     <TableCell align="right">{fmtDuration(r.durationSec)}</TableCell>
+                                    <TableCell align="right">{r.depthDelta != null ? `${fmtNum(r.depthDelta, 2)} m` : '—'}</TableCell>
+                                    <TableCell align="right">{r.joints ?? '—'}</TableCell>
                                     <TableCell align="center">
                                         {r.active
                                             ? <Chip size="small" label="ACTIVE" sx={{ bgcolor: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e55', fontWeight: 700 }} />
@@ -181,7 +200,7 @@ export default function WellDetail() {
                                 </TableRow>
                             ))}
                             {!runs.length && (
-                                <TableRow><TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>No recorded runs yet.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={10} align="center" sx={{ py: 4, color: 'text.secondary' }}>No recorded runs yet.</TableCell></TableRow>
                             )}
                         </TableBody>
                     </Table>
