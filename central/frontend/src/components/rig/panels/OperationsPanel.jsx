@@ -1,5 +1,6 @@
 ﻿import React, { useMemo, useState } from 'react';
 import { Box, Button, Paper, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { useEffect } from 'react';
 import { Anchor, Construction, Refresh, Save, Shield, Timeline } from '@mui/icons-material';
 import { useRigData } from '../../../context/RigDataContext';
 import EdrView from '../EdrView';
@@ -57,6 +58,53 @@ function TrendPlaceholder({ title, legend }) {
                 <Box sx={{ position: 'absolute', inset: 16, backgroundImage: 'linear-gradient(rgba(148,163,184,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.09) 1px, transparent 1px)', backgroundSize: '100% 25%, 18% 100%' }} />
             </Box>
             {legend && <Typography align="center" sx={{ color: BLUE, mt: 1, fontWeight: 800 }}>{legend}</Typography>}
+        </Paper>
+    );
+}
+
+function LiveTrendCard({ title, points, lines }) {
+    const width = 720;
+    const height = 215;
+    const pad = 16;
+    const safePoints = Array.isArray(points) ? points : [];
+    const gridId = `ops-grid-${title.replace(/[^a-z0-9]/gi, '')}`;
+    const toPath = (key) => {
+        const values = safePoints.map((p) => Number(p[key])).filter(Number.isFinite);
+        if (!values.length) return '';
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const span = Math.max(max - min, 1);
+        return safePoints.map((p, i) => {
+            const value = Number(p[key]);
+            if (!Number.isFinite(value)) return null;
+            const x = pad + (i / Math.max(safePoints.length - 1, 1)) * (width - pad * 2);
+            const y = height - pad - ((value - min) / span) * (height - pad * 2);
+            return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+        }).filter(Boolean).join(' ');
+    };
+    return (
+        <Paper sx={{ p: 1.5, bgcolor: PANEL2, borderColor: 'rgba(148,163,184,.25)', borderRadius: 1, minHeight: 288 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.2 }}>
+                <Typography sx={{ color: '#dbeafe', fontSize: 16 }}>{title}</Typography>
+                <Typography sx={{ color: GREEN, fontWeight: 900, fontSize: 12 }}>LIVE</Typography>
+            </Stack>
+            <Box sx={{ height, border: '1px solid rgba(148,163,184,.22)', borderRadius: 1, bgcolor: 'rgba(15,23,42,.28)', overflow: 'hidden' }}>
+                <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%" preserveAspectRatio="none">
+                    <defs>
+                        <pattern id={gridId} width="120" height="54" patternUnits="userSpaceOnUse">
+                            <path d="M 120 0 L 0 0 0 54" fill="none" stroke="rgba(148,163,184,.12)" strokeWidth="1" />
+                        </pattern>
+                    </defs>
+                    <rect width={width} height={height} fill={`url(#${gridId})`} />
+                    {lines.map((line) => {
+                        const path = toPath(line.key);
+                        return path ? <path key={line.key} d={path} fill="none" stroke={line.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" /> : null;
+                    })}
+                </svg>
+            </Box>
+            <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 1 }}>
+                {lines.map((line) => <Typography key={line.key} sx={{ color: line.color, fontWeight: 800, fontSize: 12 }}>{line.label}</Typography>)}
+            </Stack>
         </Paper>
     );
 }
@@ -182,6 +230,22 @@ function FishingPage() {
     const htd = data?.htd || {};
     const fishTop = 5150;
     const bit = Number(dr.bit_depth || 0);
+    const stringWeight = 210;
+    const tensileLimit = 500;
+    const hookLoad = Number(dw.hook_load || 0);
+    const overpull = Math.max(0, hookLoad - stringWeight);
+    const overpullPct = Math.min(100, Math.max(0, (overpull / Math.max(tensileLimit - stringWeight, 1)) * 100));
+    const [trendPoints, setTrendPoints] = useState([]);
+
+    useEffect(() => {
+        const timestamp = Date.now();
+        const next = { timestamp, hookload: hookLoad, depth: bit, overpull };
+        setTrendPoints((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && timestamp - last.timestamp < 900) return prev;
+            return [...prev, next].slice(-720);
+        });
+    }, [bit, hookLoad, overpull]);
     return (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '25% 1fr 24%' }, gap: 2 }}>
             <Stack spacing={2}>
@@ -190,17 +254,17 @@ function FishingPage() {
                 <OpCard label="String Weight" value="210" unit="tons" color={PURPLE} note="Free / tare weight (input)" />
                 <Paper sx={{ p: 2, bgcolor: PANEL2, border: `1px solid ${RED}`, borderRadius: 1 }}>
                     <Typography sx={{ color: RED, fontWeight: 900 }}>CALCULATED OVERPULL</Typography>
-                    <Typography sx={{ color: RED, fontSize: 56, fontWeight: 900 }}>0.00 <Typography component="span" sx={{ fontSize: 24, fontWeight: 900 }}>tons</Typography></Typography>
-                    <Stack direction="row" justifyContent="space-between"><Typography>Tensile Limit Utilized</Typography><Typography sx={{ color: YELLOW }}>0.00%</Typography></Stack>
-                    <Box sx={{ height: 8, bgcolor: 'rgba(148,163,184,.18)', borderRadius: 4, mt: 1 }} />
+                    <Typography sx={{ color: RED, fontSize: 56, fontWeight: 900 }}>{n(overpull, 2)} <Typography component="span" sx={{ fontSize: 24, fontWeight: 900 }}>tons</Typography></Typography>
+                    <Stack direction="row" justifyContent="space-between"><Typography>Tensile Limit Utilized</Typography><Typography sx={{ color: YELLOW }}>{n(overpullPct, 2)}%</Typography></Stack>
+                    <Box sx={{ height: 8, bgcolor: 'rgba(148,163,184,.18)', borderRadius: 4, mt: 1, overflow: 'hidden' }}><Box sx={{ height: '100%', width: `${overpullPct}%`, bgcolor: overpullPct > 80 ? RED : YELLOW }} /></Box>
                 </Paper>
                 <Paper sx={{ p: 2, bgcolor: PANEL2 }}><Typography sx={{ mb: 1 }}>SETTINGS</Typography><Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}><TextField size="small" label="String Wt (tons)" value="210" /><TextField size="small" label="Tensile Limit" value="500" /></Box></Paper>
             </Stack>
             <Stack spacing={2}>
                 <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: YELLOW, fontWeight: 900, fontSize: 20 }}>Operation Analytics</Typography><Typography>Last 12 hours</Typography></Stack>
                 <Stack direction="row" spacing={1}>{['1m','5m','10m','15m','30m','1h','12h'].map((x)=><Button key={x} variant={x==='12h'?'contained':'outlined'}>{x}</Button>)}<Button startIcon={<Refresh />} variant="outlined">RESYNC</Button></Stack>
-                <TrendPlaceholder title="WOH vs DEPTH (Trend)" legend="hookload   depth" />
-                <TrendPlaceholder title="OVERPULL HISTORY" />
+                <LiveTrendCard title="WOH vs DEPTH (Trend)" points={trendPoints} lines={[{ key: 'hookload', label: 'hookload', color: BLUE }, { key: 'depth', label: 'depth', color: YELLOW }]} />
+                <LiveTrendCard title="OVERPULL HISTORY" points={trendPoints} lines={[{ key: 'overpull', label: 'overpull', color: RED }]} />
             </Stack>
             <Stack spacing={2}>
                 <Typography sx={{ color: '#dbeafe', fontWeight: 900, letterSpacing: 1.5 }}>HOISTING & POSITION</Typography>
