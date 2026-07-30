@@ -19,6 +19,7 @@ const PINK = '#ec4899';
 const RED = '#ff4545';
 const GREEN = '#36df82';
 const FISHING_TREND_METRICS = ['drawworks.hook_load', 'drilling.bit_depth'];
+const WORKOVER_TREND_METRICS = ['pct.makeup_torque', 'htd.torque'];
 const FISHING_RANGES = [
     { label: '1m', ms: 60 * 1000 },
     { label: '5m', ms: 5 * 60 * 1000 },
@@ -257,9 +258,10 @@ function FishingPage({ rigId }) {
         if (!rigId || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return;
         try {
             setTrendError('');
-            const rows = await api.rigHistoryRange(rigId, FISHING_TREND_METRICS, fromMs, toMs);
-            const mapped = (rows || []).map((row) => {
-                const timestamp = Number(row.timestamp) || Date.parse(row.time || row.name || '') || Date.now();
+            const result = await api.rigHistoryRange(rigId, FISHING_TREND_METRICS, fromMs, toMs);
+            const historyRows = Array.isArray(result) ? result : (result?.rows || []);
+            const mapped = historyRows.map((row) => {
+                const timestamp = Number(row.t ?? row.timestamp) || Date.parse(row.time || row.name || '') || Date.now();
                 const rowHookLoad = Number(row['drawworks.hook_load']);
                 const rowBitDepth = Number(row['drilling.bit_depth']);
                 const safeHookLoad = Number.isFinite(rowHookLoad) ? rowHookLoad : 0;
@@ -391,12 +393,111 @@ function WorkoverPage({ rigId }) {
     const dr = data?.drilling || {};
     const pct = data?.pct || {};
     const mp = data?.mudpump || {};
+    const htd = data?.htd || {};
+    const makeupTorque = Number(pct.makeup_torque ?? htd.torque ?? 0) || 0;
+    const topDriveTorque = Number(htd.torque ?? 0) || 0;
+    const [trendPoints, setTrendPoints] = useState([]);
+    const [rangeMs, setRangeMs] = useState(30 * 60 * 1000);
+    const [customOpen, setCustomOpen] = useState(false);
+    const [customRange, setCustomRange] = useState({ start: '', end: '' });
+    const [isCustom, setIsCustom] = useState(false);
+    const [trendError, setTrendError] = useState('');
+
+    const loadTrendHistory = async ({ fromMs, toMs }) => {
+        if (!rigId || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return;
+        try {
+            setTrendError('');
+            const result = await api.rigHistoryRange(rigId, WORKOVER_TREND_METRICS, fromMs, toMs);
+            const historyRows = Array.isArray(result) ? result : (result?.rows || []);
+            const mapped = historyRows.map((row) => {
+                const timestamp = Number(row.t ?? row.timestamp) || Date.now();
+                const pctTorque = Number(row['pct.makeup_torque']);
+                const htdTorque = Number(row['htd.torque']);
+                return {
+                    timestamp,
+                    makeupTorque: Number.isFinite(pctTorque) ? pctTorque : (Number.isFinite(htdTorque) ? htdTorque : 0),
+                    htdTorque: Number.isFinite(htdTorque) ? htdTorque : 0,
+                };
+            }).sort((a, b) => a.timestamp - b.timestamp);
+            setTrendPoints(mapped);
+        } catch (e) {
+            setTrendError(e?.response?.data?.error || 'Workover trend history failed');
+        }
+    };
+
+    useEffect(() => {
+        if (isCustom) return;
+        const toMs = Date.now();
+        loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+    }, [isCustom, rangeMs, rigId]);
+
+    useEffect(() => {
+        const timestamp = Date.now();
+        const next = { timestamp, makeupTorque, htdTorque: topDriveTorque };
+        setTrendPoints((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && timestamp - last.timestamp < 900) return prev;
+            return [...prev, next]
+                .filter((p) => isCustom
+                    ? (!customRange.start || !customRange.end || (p.timestamp >= Date.parse(customRange.start) && p.timestamp <= Date.parse(customRange.end)))
+                    : p.timestamp >= timestamp - rangeMs)
+                .slice(-2000);
+        });
+    }, [customRange.end, customRange.start, isCustom, makeupTorque, rangeMs, topDriveTorque]);
+
+    const selectRange = (ms) => {
+        setIsCustom(false);
+        setCustomOpen(false);
+        setRangeMs(ms);
+    };
+    const applyCustomRange = () => {
+        const fromMs = Date.parse(customRange.start);
+        const toMs = Date.parse(customRange.end);
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+            setTrendError('Select valid custom start and end time');
+            return;
+        }
+        setIsCustom(true);
+        setCustomOpen(false);
+        loadTrendHistory({ fromMs, toMs });
+    };
+    const resyncTrend = () => {
+        if (isCustom) applyCustomRange();
+        else {
+            const toMs = Date.now();
+            loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+        }
+    };
+
     return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) 500px' }, gap: 2, alignItems: 'start' }}>
         <Box sx={{ minWidth: 0 }}>
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 2, mb: 2 }}><OpCard label="Tubing" value={n(wh.tubing_pressure, 1)} unit="bar" /><OpCard label="Casing" value={n(wh.casing_pressure, 1)} unit="bar" color={YELLOW} /><OpCard label="Wellhead" value={n(wh.wellhead_pressure, 1)} unit="bar" color={PURPLE} /></Box>
             <Typography sx={{ color: '#dbeafe', fontWeight: 900, mb: 1, letterSpacing: 1.2 }}>LOAD · WEIGHT · TORQUE · PUMP</Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 2, mb: 2 }}><OpCard label="Hook Load" value={n(dw.hook_load, 1)} unit="t" /><OpCard label="WOB" value={n(dr.wob, 1)} unit="t" /><OpCard label="Make-up Torque" value={n(pct.makeup_torque, 0)} unit="daN-m" color={PURPLE} /><OpCard label="Pump Rate" value={n(mp.spm, 0)} unit="spm" color={PINK} /><OpCard label="Pump Press" value={n(mp.pressure, 1)} unit="bar" color={GREEN} /></Box>
-            <Paper sx={{ p: 2, bgcolor: PANEL2, minHeight: 440, mb: 2 }}><Stack direction="row" justifyContent="space-between"><Typography sx={{ color: BLUE, fontWeight: 900, fontSize: 20 }}>?? Make-up Torque vs Time</Typography><Button variant="contained" color="inherit">IDLE</Button></Stack><Box sx={{ height: 340, display: 'grid', placeItems: 'center', color: '#c8d7ee', fontSize: 20 }}>??<br />No make-up in progress</Box></Paper>
+            <Paper sx={{ p: 2, bgcolor: PANEL2, minHeight: 510, mb: 2 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+                    <Typography sx={{ color: BLUE, fontWeight: 900, fontSize: 20 }}>Make-up Torque vs Time</Typography>
+                    <Button variant="contained" color="inherit">IDLE</Button>
+                </Stack>
+                <Stack spacing={1} sx={{ my: 1.5 }}>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {FISHING_RANGES.map((item) => <Button key={item.label} size="small" variant={!isCustom && rangeMs === item.ms ? 'contained' : 'outlined'} onClick={() => selectRange(item.ms)}>{item.label}</Button>)}
+                        <Button size="small" variant={isCustom ? 'contained' : 'outlined'} onClick={() => setCustomOpen((o) => !o)}>Custom</Button>
+                        <Button size="small" startIcon={<Refresh />} variant="outlined" onClick={resyncTrend}>RESYNC</Button>
+                    </Stack>
+                    {customOpen && (
+                        <Paper sx={{ p: 1.25, bgcolor: CARD, borderColor: 'rgba(148,163,184,.25)' }} variant="outlined">
+                            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                                <TextField size="small" label="Start" type="datetime-local" value={customRange.start} onChange={(e) => setCustomRange((r) => ({ ...r, start: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                                <TextField size="small" label="End" type="datetime-local" value={customRange.end} onChange={(e) => setCustomRange((r) => ({ ...r, end: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                                <Button variant="contained" onClick={applyCustomRange}>Apply</Button>
+                            </Stack>
+                        </Paper>
+                    )}
+                    {trendError && <Typography sx={{ color: RED, fontWeight: 800 }}>{trendError}</Typography>}
+                </Stack>
+                <LiveTrendCard title="Make-up Torque Trend" points={trendPoints} lines={[{ key: 'makeupTorque', label: 'make-up torque', color: PURPLE }, { key: 'htdTorque', label: 'HTD torque', color: BLUE }]} />
+            </Paper>
             <Paper sx={{ p: 2, bgcolor: PANEL2 }}><Stack direction="row" justifyContent="space-between"><Typography sx={{ color: BLUE, fontWeight: 900, fontSize: 20 }}>Connections</Typography><Stack direction="row" spacing={1}>{['Joint # 0','Run 0','Pass 0','Fail 0'].map((x)=><Button key={x} variant="outlined">{x}</Button>)}</Stack></Stack><Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', mt: 4, color: '#dbeafe', fontWeight: 900 }}><span>Joint #</span><span>Peak Torque</span><span>Result</span><span>Duration</span><span>Time</span><span>Activity</span></Box></Paper>
         </Box>
         <Paper sx={{ p: 1.5, bgcolor: PANEL2, width: '100%', height: 'calc(100vh - 250px)', minHeight: 650, position: { lg: 'sticky' }, top: 8, display: 'flex', flexDirection: 'column' }}>
