@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { Anchor, Construction, Refresh, Save, Shield, Timeline } from '@mui/icons-material';
 import { useRigData } from '../../../context/RigDataContext';
 import EdrView from '../EdrView';
+import { api } from '../../../api';
 
 const BG = '#0b1220';
 const PANEL = '#202a39';
@@ -17,6 +18,16 @@ const PURPLE = '#9b6cff';
 const PINK = '#ec4899';
 const RED = '#ff4545';
 const GREEN = '#36df82';
+const FISHING_TREND_METRICS = ['drawworks.hook_load', 'drilling.bit_depth'];
+const FISHING_RANGES = [
+    { label: '1m', ms: 60 * 1000 },
+    { label: '5m', ms: 5 * 60 * 1000 },
+    { label: '10m', ms: 10 * 60 * 1000 },
+    { label: '15m', ms: 15 * 60 * 1000 },
+    { label: '30m', ms: 30 * 60 * 1000 },
+    { label: '1h', ms: 60 * 60 * 1000 },
+    { label: '12h', ms: 12 * 60 * 60 * 1000 },
+];
 
 function n(value, d = 1, fallback = '0.0') {
     const num = Number(value);
@@ -222,7 +233,7 @@ function CalcBox({ label, value, unit, color, note, small }) {
     </Paper>;
 }
 
-function FishingPage() {
+function FishingPage({ rigId }) {
     const { data } = useRigData();
     const dw = data?.drawworks || {};
     const dr = data?.drilling || {};
@@ -236,6 +247,40 @@ function FishingPage() {
     const overpull = Math.max(0, hookLoad - stringWeight);
     const overpullPct = Math.min(100, Math.max(0, (overpull / Math.max(tensileLimit - stringWeight, 1)) * 100));
     const [trendPoints, setTrendPoints] = useState([]);
+    const [rangeMs, setRangeMs] = useState(12 * 60 * 60 * 1000);
+    const [customOpen, setCustomOpen] = useState(false);
+    const [customRange, setCustomRange] = useState({ start: '', end: '' });
+    const [isCustom, setIsCustom] = useState(false);
+    const [trendError, setTrendError] = useState('');
+
+    const loadTrendHistory = async ({ fromMs, toMs }) => {
+        if (!rigId || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return;
+        try {
+            setTrendError('');
+            const rows = await api.rigHistoryRange(rigId, FISHING_TREND_METRICS, fromMs, toMs);
+            const mapped = (rows || []).map((row) => {
+                const timestamp = Number(row.timestamp) || Date.parse(row.time || row.name || '') || Date.now();
+                const rowHookLoad = Number(row['drawworks.hook_load']);
+                const rowBitDepth = Number(row['drilling.bit_depth']);
+                const safeHookLoad = Number.isFinite(rowHookLoad) ? rowHookLoad : 0;
+                return {
+                    timestamp,
+                    hookload: safeHookLoad,
+                    depth: Number.isFinite(rowBitDepth) ? rowBitDepth : 0,
+                    overpull: Math.max(0, safeHookLoad - stringWeight),
+                };
+            }).sort((a, b) => a.timestamp - b.timestamp);
+            setTrendPoints(mapped);
+        } catch (e) {
+            setTrendError(e?.response?.data?.error || 'Trend history failed');
+        }
+    };
+
+    useEffect(() => {
+        if (isCustom) return;
+        const toMs = Date.now();
+        loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+    }, [isCustom, rangeMs, rigId]);
 
     useEffect(() => {
         const timestamp = Date.now();
@@ -243,9 +288,41 @@ function FishingPage() {
         setTrendPoints((prev) => {
             const last = prev[prev.length - 1];
             if (last && timestamp - last.timestamp < 900) return prev;
-            return [...prev, next].slice(-720);
+            const merged = [...prev, next]
+                .filter((p) => isCustom
+                    ? (!customRange.start || !customRange.end || (p.timestamp >= Date.parse(customRange.start) && p.timestamp <= Date.parse(customRange.end)))
+                    : p.timestamp >= timestamp - rangeMs)
+                .slice(-2000);
+            return merged;
         });
-    }, [bit, hookLoad, overpull]);
+    }, [bit, customRange.end, customRange.start, hookLoad, isCustom, overpull, rangeMs]);
+
+    const selectRange = (ms) => {
+        setIsCustom(false);
+        setCustomOpen(false);
+        setRangeMs(ms);
+    };
+
+    const applyCustomRange = () => {
+        const fromMs = Date.parse(customRange.start);
+        const toMs = Date.parse(customRange.end);
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+            setTrendError('Select valid custom start and end time');
+            return;
+        }
+        setIsCustom(true);
+        setCustomOpen(false);
+        loadTrendHistory({ fromMs, toMs });
+    };
+
+    const resyncTrend = () => {
+        if (isCustom) {
+            applyCustomRange();
+        } else {
+            const toMs = Date.now();
+            loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+        }
+    };
     return (
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '25% 1fr 24%' }, gap: 2 }}>
             <Stack spacing={2}>
@@ -261,8 +338,24 @@ function FishingPage() {
                 <Paper sx={{ p: 2, bgcolor: PANEL2 }}><Typography sx={{ mb: 1 }}>SETTINGS</Typography><Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}><TextField size="small" label="String Wt (tons)" value="210" /><TextField size="small" label="Tensile Limit" value="500" /></Box></Paper>
             </Stack>
             <Stack spacing={2}>
-                <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: YELLOW, fontWeight: 900, fontSize: 20 }}>Operation Analytics</Typography><Typography>Last 12 hours</Typography></Stack>
-                <Stack direction="row" spacing={1}>{['1m','5m','10m','15m','30m','1h','12h'].map((x)=><Button key={x} variant={x==='12h'?'contained':'outlined'}>{x}</Button>)}<Button startIcon={<Refresh />} variant="outlined">RESYNC</Button></Stack>
+                <Stack direction="row" justifyContent="space-between"><Typography sx={{ color: YELLOW, fontWeight: 900, fontSize: 20 }}>Operation Analytics</Typography><Typography>{isCustom ? 'Custom range' : `Last ${FISHING_RANGES.find((r) => r.ms === rangeMs)?.label || '12h'}`}</Typography></Stack>
+                <Stack spacing={1}>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {FISHING_RANGES.map((item) => <Button key={item.label} variant={!isCustom && rangeMs === item.ms ? 'contained' : 'outlined'} onClick={() => selectRange(item.ms)}>{item.label}</Button>)}
+                        <Button variant={isCustom ? 'contained' : 'outlined'} onClick={() => setCustomOpen((o) => !o)}>Custom</Button>
+                        <Button startIcon={<Refresh />} variant="outlined" onClick={resyncTrend}>RESYNC</Button>
+                    </Stack>
+                    {customOpen && (
+                        <Paper sx={{ p: 1.25, bgcolor: CARD, borderColor: 'rgba(148,163,184,.25)' }} variant="outlined">
+                            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                                <TextField size="small" label="Start" type="datetime-local" value={customRange.start} onChange={(e) => setCustomRange((r) => ({ ...r, start: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                                <TextField size="small" label="End" type="datetime-local" value={customRange.end} onChange={(e) => setCustomRange((r) => ({ ...r, end: e.target.value }))} InputLabelProps={{ shrink: true }} />
+                                <Button variant="contained" onClick={applyCustomRange}>Apply</Button>
+                            </Stack>
+                        </Paper>
+                    )}
+                    {trendError && <Typography sx={{ color: RED, fontWeight: 800 }}>{trendError}</Typography>}
+                </Stack>
                 <LiveTrendCard title="WOH vs DEPTH (Trend)" points={trendPoints} lines={[{ key: 'hookload', label: 'hookload', color: BLUE }, { key: 'depth', label: 'depth', color: YELLOW }]} />
                 <LiveTrendCard title="OVERPULL HISTORY" points={trendPoints} lines={[{ key: 'overpull', label: 'overpull', color: RED }]} />
             </Stack>
