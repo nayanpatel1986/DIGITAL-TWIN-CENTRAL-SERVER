@@ -53,7 +53,7 @@ export const api = {
     activity: (id, hours) => axios.get(`/api/rigs/${id}/activity`, { params: hours ? { hours } : {} }).then((r) => r.data),
     // Per-rig remote HMI mirror (edge-shape live payload + multi-metric strips + alarms).
     rigLive: (id) => axios.get(`/api/rigs/${id}/live`).then((r) => r.data),
-    rigHistoryMulti: (id, metrics, minutes) => axios.get(`/api/rigs/${id}/history-multi`, { params: { metrics: Array.isArray(metrics) ? metrics.join(',') : metrics, minutes } }).then((r) => r.data),
+    rigHistoryMulti: (id, metrics, minutes, maxPoints) => axios.get(`/api/rigs/${id}/history-multi`, { params: { metrics: Array.isArray(metrics) ? metrics.join(',') : metrics, minutes, maxPoints } }).then((r) => r.data),
     rigAlarms: (id, limit) => axios.get(`/api/rigs/${id}/alarms`, { params: { limit } }).then((r) => r.data),
     rigMessages: (id, limit) => axios.get(`/api/rigs/${id}/messages`, { params: { limit } }).then((r) => r.data),
     sendRigMessage: (id, body) => axios.post(`/api/rigs/${id}/messages`, body).then((r) => r.data),
@@ -123,6 +123,6 @@ export const api = {
     updateWell: (id, p) => axios.patch(`/api/wells/${encodeURIComponent(id)}`, p).then((r) => r.data),
     deleteWell: (id) => axios.delete(`/api/wells/${encodeURIComponent(id)}`).then((r) => r.data),
     // Range-mode multi-metric history (epochMs from/to) for offline EDR replay over a well run.
-    rigHistoryRange: (id, metrics, fromMs, toMs) => axios.get(`/api/rigs/${id}/history-multi`, { params: { metrics: (metrics || []).join(','), from: fromMs, to: toMs } }).then((r) => r.data),
+    rigHistoryRange: (id, metrics, fromMs, toMs, maxPoints) => axios.get(`/api/rigs/${id}/history-multi`, { params: { metrics: (metrics || []).join(','), from: fromMs, to: toMs, maxPoints } }).then((r) => r.data),
 };
 

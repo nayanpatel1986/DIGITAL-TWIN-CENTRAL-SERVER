@@ -350,9 +350,9 @@ function buildApiRouter() {
         const fromMs = Number(req.query.from);
         const toMs = Number(req.query.to);
         if (Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs) {
-            return rigview.multiHistory(req.params.id, req.query.metrics, { fromMs, toMs });
+            return rigview.multiHistory(req.params.id, req.query.metrics, { fromMs, toMs, maxPoints: req.query.maxPoints });
         }
-        return rigview.multiHistory(req.params.id, req.query.metrics, req.query.minutes);
+        return rigview.multiHistory(req.params.id, req.query.metrics, { minutes: req.query.minutes, maxPoints: req.query.maxPoints });
     }));
     r.get('/rigs/:id/alarms', wrap((req) =>
         rigview.rigAlarms(req.params.id, req.query.limit)));

@@ -5,7 +5,7 @@ import {
     Tabs, Tab, IconButton, Tooltip, Divider, Menu, MenuItem, ListItemIcon,
     Dialog, DialogTitle, DialogContent, DialogActions, TextField, Chip,
 } from '@mui/material';
-import { ArrowBack, ExpandMore, ExpandLess, Refresh, Palette, Logout, VolumeOff, GridView, ShowChart, Storage, Speed, Assignment, NotificationsNone, Description, Healing, Settings, ChatBubbleOutline, Send } from '@mui/icons-material';
+import { ArrowBack, ExpandMore, ExpandLess, Refresh, Palette, Logout, VolumeOff, VolumeUp, GridView, ShowChart, Storage, Speed, Assignment, NotificationsNone, Description, Healing, Settings, ChatBubbleOutline, Send } from '@mui/icons-material';
 import { api, phaseColor } from '../api';
 import { socket } from '../socket';
 import { StatusChip, HealthBar, PriorityChip, fmtAgo, fmtNum } from './common';
@@ -44,6 +44,12 @@ const HMI_MENU_META = {
     settings: { menuLabel: 'Settings', icon: <Settings fontSize="small" /> },
 };
 const MESSAGE_TYPES = ['General', 'Instruction', 'Warning', 'Safety', 'Maintenance', 'Sensor Check', 'ETP / Network'];
+const THEME_OPTIONS = [
+    { key: 'dark', label: 'Dark Blue', color: 'primary.main' },
+    { key: 'contrast', label: 'High Contrast', color: 'warning.main' },
+    { key: 'green', label: 'Green Night', color: 'success.main' },
+    { key: 'purple', label: 'Purple Night', color: 'secondary.main' },
+];
 
 function RigMessageButton({ rig }) {
     const [open, setOpen] = useState(false);
@@ -221,6 +227,33 @@ function EdgeTwinTopBar({ rig, onBack, showKpiToggle, kpiOpen, onToggleKpis }) {
     const holeDepth = findMetric(rig, 'drilling.hole_depth', 'HOLE DEPTH');
     const bitDepth = findMetric(rig, 'drilling.bit_depth', 'BIT DEPTH');
     const title = 'Asset Monitoring Centre';
+    const [themeMode, setThemeMode] = useState(() => localStorage.getItem('crmf_theme_mode') || 'dark');
+    const [themeAnchor, setThemeAnchor] = useState(null);
+    const [muted, setMuted] = useState(() => localStorage.getItem('crmf_sound_muted') === '1');
+
+    useEffect(() => {
+        const safeMode = THEME_OPTIONS.some((item) => item.key === themeMode) ? themeMode : 'dark';
+        if (safeMode !== themeMode) {
+            setThemeMode(safeMode);
+            localStorage.setItem('crmf_theme_mode', safeMode);
+        }
+        document.documentElement.dataset.crmfTheme = safeMode;
+    }, [themeMode]);
+
+    const chooseTheme = (next) => {
+        setThemeMode(next);
+        localStorage.setItem('crmf_theme_mode', next);
+        document.documentElement.dataset.crmfTheme = next;
+        setThemeAnchor(null);
+    };
+
+    const toggleMute = () => {
+        const next = !muted;
+        setMuted(next);
+        localStorage.setItem('crmf_sound_muted', next ? '1' : '0');
+        window.__CRMF_SOUND_MUTED = next;
+        window.dispatchEvent(new CustomEvent('crmf-sound-muted-change', { detail: { muted: next } }));
+    };
 
     return (
         <Paper sx={{ mb: 1, px: 2, py: 1.1, borderRadius: 1, bgcolor: '#172235', borderColor: 'rgba(62,166,255,0.18)' }}>
@@ -246,8 +279,24 @@ function EdgeTwinTopBar({ rig, onBack, showKpiToggle, kpiOpen, onToggleKpis }) {
                         </Tooltip>
                     )}
                     <Tooltip title="Refresh"><IconButton size="small" onClick={() => window.location.reload()}><Refresh fontSize="small" /></IconButton></Tooltip>
-                    <Tooltip title="Theme"><IconButton size="small"><Palette fontSize="small" /></IconButton></Tooltip>
-                    <Tooltip title="Mute"><IconButton size="small"><VolumeOff fontSize="small" /></IconButton></Tooltip>
+                    <Tooltip title="Theme options">
+                        <IconButton size="small" onClick={(event) => setThemeAnchor(event.currentTarget)} sx={{ color: THEME_OPTIONS.find((item) => item.key === themeMode)?.color || 'primary.main', border: '1px solid', borderColor: 'rgba(62,166,255,.35)' }}>
+                            <Palette fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Menu anchorEl={themeAnchor} open={Boolean(themeAnchor)} onClose={() => setThemeAnchor(null)} PaperProps={{ sx: { minWidth: 190 } }}>
+                        {THEME_OPTIONS.map((item) => (
+                            <MenuItem key={item.key} selected={themeMode === item.key} onClick={() => chooseTheme(item.key)}>
+                                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: item.color, mr: 1.2 }} />
+                                {item.label}
+                            </MenuItem>
+                        ))}
+                    </Menu>
+                    <Tooltip title={muted ? 'Sound muted - click to unmute' : 'Sound on - click to mute'}>
+                        <IconButton size="small" onClick={toggleMute} sx={{ color: muted ? 'text.secondary' : 'success.main', border: '1px solid', borderColor: muted ? 'rgba(148,163,184,.35)' : 'rgba(34,197,94,.45)' }}>
+                            {muted ? <VolumeOff fontSize="small" /> : <VolumeUp fontSize="small" />}
+                        </IconButton>
+                    </Tooltip>
                     <Tooltip title="Back to fleet"><IconButton size="small" onClick={onBack} sx={{ color: 'error.main' }}><Logout fontSize="small" /></IconButton></Tooltip>
                 </Stack>
             </Stack>
@@ -762,8 +811,8 @@ function AcsDerrick({ blockHeight, crownSaver, floorSaver }) {
     const crownOn = Number.isFinite(crownLimit) && crownLimit > 0 && numericHeight >= crownLimit;
     const floorOn = Number.isFinite(floorLimit) && numericHeight <= floorLimit;
     return (
-        <Box sx={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'visible', mt: -1.0, mx: -1.5 }}>
-            <svg viewBox="28 0 180 430" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style={{ maxWidth: 360, transform: 'scale(1.08)', transformOrigin: 'center center' }}>
+        <Box sx={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'visible', mt: -1.0, mx: -0.2 }}>
+            <svg viewBox="28 0 180 430" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style={{ maxWidth: 460, transform: 'scaleX(1.48) scaleY(1.08)', transformOrigin: 'center center' }}>
                 <defs>
                     <filter id="acsGlow" x="-30%" y="-30%" width="160%" height="160%">
                         <feGaussianBlur stdDeviation="6" result="blur" />

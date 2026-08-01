@@ -166,13 +166,14 @@ async function multiHistory(rigId, metrics, minutesOrOpts = 30) {
 
     // Range mode: an explicit { fromMs, toMs } window (offline replay).
     const opts = (minutesOrOpts && typeof minutesOrOpts === 'object') ? minutesOrOpts : null;
+    const maxPoints = Math.min(Math.max(Number(opts?.maxPoints) || 260, 80), 500);
     const fromMs = opts ? Number(opts.fromMs) : NaN;
     const toMs = opts ? Number(opts.toMs) : NaN;
     if (Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs) {
         const fromIso = new Date(fromMs).toISOString();
         const toIso = new Date(toMs).toISOString();
         const spanSec = (toMs - fromMs) / 1000;
-        const bucketSec = Math.max(1, Math.round(spanSec / 400));   // ~400 points max
+        const bucketSec = Math.max(1, Math.ceil(spanSec / maxPoints));
         let rows;
         if (spanSec <= RANGE_RAW_MAX_HOURS * 3600) {
             ({ rows } = await query(
@@ -200,8 +201,9 @@ async function multiHistory(rigId, metrics, minutesOrOpts = 30) {
     }
 
     // Minutes mode (default): a trailing window ending at now().
-    const mins = Math.min(Math.max(Number(minutesOrOpts) || 30, 1), 60 * 24 * 7);
-    const bucketSec = Math.max(1, Math.round((mins * 60) / 400));   // ~400 points max
+    const minuteValue = opts ? opts.minutes : minutesOrOpts;
+    const mins = Math.min(Math.max(Number(minuteValue) || 30, 1), 60 * 24 * 7);
+    const bucketSec = Math.max(1, Math.ceil((mins * 60) / maxPoints));
     const { rows } = await query(
         `SELECT time_bucket(($3 || ' seconds')::interval, ts) AS b, metric, avg(value) AS v
          FROM telemetry

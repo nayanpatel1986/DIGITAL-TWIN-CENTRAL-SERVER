@@ -20,6 +20,7 @@ const RED = '#ff4545';
 const GREEN = '#36df82';
 const FISHING_TREND_METRICS = ['drawworks.hook_load', 'drilling.bit_depth'];
 const WORKOVER_TREND_METRICS = ['pct.makeup_torque', 'htd.torque'];
+const WELL_CONTROL_TREND_METRICS = ['well_control.annular_pressure', 'well_control.manifold_pressure', 'well_control.accumulator_pressure'];
 const FISHING_RANGES = [
     { label: '1m', ms: 60 * 1000 },
     { label: '5m', ms: 5 * 60 * 1000 },
@@ -146,21 +147,79 @@ function BopGraphic() {
     );
 }
 
-function WellControlPage() {
+function WellControlPage({ rigId }) {
     const { data } = useRigData();
     const wc = data?.well_control || {};
+    const hasWellControlData = wc.available === 1 || wc.available === true
+        || wc.annular_pressure != null || wc.manifold_pressure != null || wc.accumulator_pressure != null;
     const [form, setForm] = useState({ sidpp: 500, sicp: 750, mw: 10, tvd: 10000, scr: 600, shoe: 4000, lot: 13.5 });
+    const [rangeMs, setRangeMs] = useState(5 * 60 * 1000);
+    const [trendPoints, setTrendPoints] = useState([]);
+    const [trendError, setTrendError] = useState('');
+    const [liveTick, setLiveTick] = useState(0);
     const kmw = useMemo(() => (Number(form.mw) + Number(form.sicp) / (0.052 * Number(form.tvd || 1))), [form]);
     const icp = Number(form.sidpp) + Number(form.scr);
     const fcp = Number(form.scr) * (Number(form.mw) / Math.max(kmw, 0.1));
     const maasp = (Number(form.lot) - Number(form.mw)) * 0.052 * Number(form.shoe);
     const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+    const loadTrendHistory = async ({ fromMs, toMs }) => {
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return;
+        try {
+            setTrendError('');
+            const result = await api.rigHistoryRange(rigId, WELL_CONTROL_TREND_METRICS, fromMs, toMs);
+            const rows = Array.isArray(result) ? result : (result?.rows || []);
+            const mapped = rows.map((row) => ({
+                timestamp: Number(row.t ?? row.timestamp) || Date.parse(row.time || row.name || '') || Date.now(),
+                annular: Number(row['well_control.annular_pressure']) || 0,
+                manifold: Number(row['well_control.manifold_pressure']) || 0,
+                accumulator: Number(row['well_control.accumulator_pressure']) || 0,
+            })).sort((a, b) => a.timestamp - b.timestamp);
+            setTrendPoints(mapped);
+        } catch (e) {
+            setTrendError(e?.response?.data?.error || 'Well control trend history failed');
+        }
+    };
+
+    useEffect(() => {
+        const toMs = Date.now();
+        loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+        const refresh = setInterval(() => {
+            const now = Date.now();
+            loadTrendHistory({ fromMs: now - rangeMs, toMs: now });
+        }, 30000);
+        return () => clearInterval(refresh);
+    }, [rangeMs, rigId]);
+
+    useEffect(() => {
+        const ticker = setInterval(() => setLiveTick((v) => v + 1), 1000);
+        return () => clearInterval(ticker);
+    }, []);
+
+    useEffect(() => {
+        const timestamp = Date.now();
+        const next = {
+            timestamp,
+            annular: Number(wc.annular_pressure) || 0,
+            manifold: Number(wc.manifold_pressure) || 0,
+            accumulator: Number(wc.accumulator_pressure) || 0,
+        };
+        setTrendPoints((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && timestamp - last.timestamp < 900) return prev;
+            return [...prev, next].filter((p) => p.timestamp >= timestamp - rangeMs).slice(-2000);
+        });
+    }, [liveTick, rangeMs, wc.accumulator_pressure, wc.annular_pressure, wc.manifold_pressure]);
+
+    const resyncTrend = () => {
+        const toMs = Date.now();
+        loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+    };
 
     return (
         <Stack spacing={2}>
-            <Paper sx={{ px: 2, py: 1.35, bgcolor: 'rgba(255,69,69,.12)', border: `1px solid ${RED}`, borderRadius: 1, display: 'flex', alignItems: 'center', gap: 1.2 }}>
-                <Box sx={{ width: 14, height: 14, borderRadius: '50%', bgcolor: RED, boxShadow: `0 0 12px ${RED}` }} />
-                <Typography sx={{ color: RED, fontWeight: 900, fontSize: 18, letterSpacing: 1.2, textTransform: 'uppercase' }}>WELL CONTROL TELEMETRY UNAVAILABLE - NO BOP DATA SOURCE</Typography>
+            <Paper sx={{ px: 2, py: 1.35, bgcolor: hasWellControlData ? 'rgba(54,223,130,.12)' : 'rgba(255,69,69,.12)', border: `1px solid ${hasWellControlData ? GREEN : RED}`, borderRadius: 1, display: 'flex', alignItems: 'center', gap: 1.2 }}>
+                <Box sx={{ width: 14, height: 14, borderRadius: '50%', bgcolor: hasWellControlData ? GREEN : RED, boxShadow: `0 0 12px ${hasWellControlData ? GREEN : RED}` }} />
+                <Typography sx={{ color: hasWellControlData ? GREEN : RED, fontWeight: 900, fontSize: 18, letterSpacing: 1.2, textTransform: 'uppercase' }}>{hasWellControlData ? 'WELL CONTROL TELEMETRY LIVE' : 'WELL CONTROL TELEMETRY UNAVAILABLE - NO BOP DATA SOURCE'}</Typography>
             </Paper>
 
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '32% 1fr' }, gap: 2 }}>
@@ -183,11 +242,16 @@ function WellControlPage() {
                     </Box>
                     <Box sx={{ borderTop: '1px dashed rgba(148,163,184,.25)', mt: 4, pt: 2 }}>
                         <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-                            {['1M', '5M', '10M', '15M', '30M', '1H', '12H'].map((x) => <Button key={x} size="small" variant={x === '5M' ? 'contained' : 'outlined'} sx={{ minWidth: 48, fontWeight: 900 }}>{x}</Button>)}
-                            <Button size="small" startIcon={<Refresh />} variant="outlined">RESYNC</Button>
+                            {FISHING_RANGES.map((x) => <Button key={x.label} size="small" variant={x.ms === rangeMs ? 'contained' : 'outlined'} onClick={() => setRangeMs(x.ms)} sx={{ minWidth: 48, fontWeight: 900 }}>{x.label.toUpperCase()}</Button>)}
+                            <Button size="small" startIcon={<Refresh />} variant="outlined" onClick={resyncTrend}>RESYNC</Button>
                         </Stack>
                         <Typography sx={{ color: '#a8c0df', mt: 2 }}>BOP PRESSURES (Trend)</Typography>
-                        <TrendPlaceholder title="" legend="Manifold Press   Annular Press" />
+                        {trendError && <Typography sx={{ color: RED, fontWeight: 800, my: 1 }}>{trendError}</Typography>}
+                        <LiveTrendCard title="" points={trendPoints} lines={[
+                            { key: 'annular', label: 'Annular Press', color: CYAN },
+                            { key: 'manifold', label: 'Manifold Press', color: PURPLE },
+                            { key: 'accumulator', label: 'Accumulator Press', color: PINK },
+                        ]} />
                     </Box>
                 </Paper>
 
@@ -253,6 +317,7 @@ function FishingPage({ rigId }) {
     const [customRange, setCustomRange] = useState({ start: '', end: '' });
     const [isCustom, setIsCustom] = useState(false);
     const [trendError, setTrendError] = useState('');
+    const [liveTick, setLiveTick] = useState(0);
 
     const loadTrendHistory = async ({ fromMs, toMs }) => {
         if (!rigId || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return;
@@ -282,7 +347,17 @@ function FishingPage({ rigId }) {
         if (isCustom) return;
         const toMs = Date.now();
         loadTrendHistory({ fromMs: toMs - rangeMs, toMs });
+        const refresh = setInterval(() => {
+            const now = Date.now();
+            loadTrendHistory({ fromMs: now - rangeMs, toMs: now });
+        }, 30000);
+        return () => clearInterval(refresh);
     }, [isCustom, rangeMs, rigId]);
+
+    useEffect(() => {
+        const ticker = setInterval(() => setLiveTick((v) => v + 1), 1000);
+        return () => clearInterval(ticker);
+    }, []);
 
     useEffect(() => {
         const timestamp = Date.now();
@@ -297,7 +372,7 @@ function FishingPage({ rigId }) {
                 .slice(-2000);
             return merged;
         });
-    }, [bit, customRange.end, customRange.start, hookLoad, isCustom, overpull, rangeMs]);
+    }, [bit, customRange.end, customRange.start, hookLoad, isCustom, liveTick, overpull, rangeMs]);
 
     const selectRange = (ms) => {
         setIsCustom(false);

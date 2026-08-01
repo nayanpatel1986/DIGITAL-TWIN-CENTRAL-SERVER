@@ -120,6 +120,7 @@ const TIME_WINDOWS = [
     { label: '12H', ms: 12 * 60 * 60 * 1000, range: '-12h' },
     { label: '24H', ms: 24 * 60 * 60 * 1000, range: '-24h' }
 ];
+const DAY_MS = 24 * 60 * 60 * 1000;
 const DEPTH_SPANS = [
     { label: '25m', m: 25 },
     { label: '50m', m: 50 },
@@ -127,6 +128,56 @@ const DEPTH_SPANS = [
     { label: '250m', m: 250 },
     { label: '500m', m: 500 }
 ];
+const HISTORY_CACHE = new Map();
+const HISTORY_CACHE_LIMIT = 40;
+
+function cacheKeyFor(rigId, channels, modeKey) {
+    return `${rigId || ''}|${modeKey}|${(channels || []).slice().sort().join(',')}`;
+}
+
+function setHistoryCache(key, samples) {
+    if (!key || !Array.isArray(samples)) return;
+    HISTORY_CACHE.set(key, samples);
+    while (HISTORY_CACHE.size > HISTORY_CACHE_LIMIT) {
+        HISTORY_CACHE.delete(HISTORY_CACHE.keys().next().value);
+    }
+}
+
+const pad2 = (value) => String(value).padStart(2, '0');
+
+const toDateTimeLocalValue = (ms) => {
+    const d = new Date(ms);
+    if (!Number.isFinite(d.getTime())) return '';
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+const parseDateTimeLocalValue = (value) => {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : null;
+};
+
+const formatAxisTime = (ms, showDate = false) => {
+    const opts = showDate
+        ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }
+        : { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    return new Date(ms).toLocaleString([], opts);
+};
+
+const formatAxisDate = (ms) => new Date(ms).toLocaleDateString([], {
+    month: '2-digit', day: '2-digit'
+});
+
+const formatAxisClock = (ms, includeSeconds = false) => new Date(ms).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+    hour12: false
+});
+
+const shouldShowDateOnAxis = (fromMs, toMs) => {
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return false;
+    return (toMs - fromMs) >= DAY_MS || new Date(fromMs).toDateString() !== new Date(toMs).toDateString();
+};
 
 // ---------------------------------------------------------------------------
 // Config normalization / persistence
@@ -178,7 +229,8 @@ const loadPersisted = (storageKey, defaultStrips, defaultReadouts) => {
         indexMode: 'time',
         readouts: normalizeReadouts(defaultReadouts),
         timeWinIdx: null,
-        depthSpanIdx: null
+        depthSpanIdx: null,
+        customWindow: null
     };
     if (!storageKey) return fallback;
     try {
@@ -197,12 +249,18 @@ const loadPersisted = (storageKey, defaultStrips, defaultReadouts) => {
         const depthSpanIdx = Number.isInteger(parsed?.depthSpanIdx) && parsed.depthSpanIdx >= 0 && parsed.depthSpanIdx < DEPTH_SPANS.length
             ? parsed.depthSpanIdx
             : null;
+        const customFrom = Number(parsed?.customWindow?.fromMs);
+        const customTo = Number(parsed?.customWindow?.toMs);
+        const customWindow = Number.isFinite(customFrom) && Number.isFinite(customTo) && customTo > customFrom
+            ? { fromMs: customFrom, toMs: customTo, label: parsed?.customWindow?.label || 'Custom range' }
+            : null;
         return {
             strips: strips.length ? strips : fallback.strips,
             indexMode: parsed?.indexMode === 'depth' ? 'depth' : 'time',
             readouts,
             timeWinIdx,
-            depthSpanIdx
+            depthSpanIdx,
+            customWindow
         };
     } catch (e) {
         return fallback;
@@ -403,7 +461,7 @@ function ScrollRail({ onUp, onDown, onHoldUp, onHoldDown, onHoldStop, upTip, dow
 // SVG strip chart
 // ---------------------------------------------------------------------------
 
-function StripChart({ strip, samples, indexMode, indexDomain, accentColor, gridColor, axisTextColor, surface, border, subText, textColor, cursorFrac, onCursorFracChange }) {
+function StripChart({ strip, samples, indexMode, indexDomain, showDateLabels = false, accentColor, gridColor, axisTextColor, surface, border, subText, textColor, cursorFrac, onCursorFracChange }) {
     const ref = useRef(null);
     const [size, setSize] = useState({ w: 240, h: 260 });
     // Hovered cursor position, in fractional [0..1] of chart height (null = no hover).
@@ -436,6 +494,7 @@ function StripChart({ strip, samples, indexMode, indexDomain, accentColor, gridC
     // Horizontal gridlines map to the shared index domain.
     const [d0, d1] = indexDomain;
     const span = d1 - d0 || 1;
+    const chartShowDateLabels = indexMode === 'time' && (showDateLabels || shouldShowDateOnAxis(d0, d1));
     const yFor = (idx) => ((idx - d0) / span) * h;
 
     const hTickCount = Math.max(2, Math.min(8, Math.round(h / 48)));
@@ -484,11 +543,12 @@ function StripChart({ strip, samples, indexMode, indexDomain, accentColor, gridC
     const fmtIndex = (v) => (
         indexMode === 'depth'
             ? `${fmtScale(v)} m`
-            : new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+            : formatAxisTime(v, chartShowDateLabels)
     );
 
     // Tooltip box geometry - clamp inside the strip and show this panel's selected pens.
     const showTooltip = cursorFrac != null && enabledPens.length > 0;
+    const tooltipNearBottom = Number(cursorFrac) > 0.7;
     const tipRows = showTooltip
         ? enabledPens.map(pen => ({
             color: pen.color,
@@ -539,7 +599,7 @@ function StripChart({ strip, samples, indexMode, indexDomain, accentColor, gridC
             onPointerMove={handleMove}
             onMouseMove={handleMove}
             onPointerLeave={handleLeave}
-            sx={{ position: 'relative', width: '100%', height: '100%', zIndex: showTooltip ? 30 : 1 }}
+            sx={{ position: 'relative', width: '100%', height: '100%', zIndex: showTooltip ? 1000 : 1 }}
         >
             <svg width="100%" height="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block' }}>
                 {/* horizontal index gridlines */}
@@ -604,14 +664,16 @@ function StripChart({ strip, samples, indexMode, indexDomain, accentColor, gridC
                         position: 'absolute',
                         left: cursorFrac > 0.5 ? 4 : 'auto',
                         right: cursorFrac > 0.5 ? 'auto' : 4,
-                        // place near the cursor but keep the box on-screen vertically
-                        top: `${Math.max(2, Math.min(82, cursorFrac * 100))}%`,
-                        zIndex: 100,
+                        // Near the bottom, anchor tooltip above the cursor so chart lines
+                        // do not run behind the popup text/value list.
+                        top: tooltipNearBottom ? 'auto' : `${Math.max(2, Math.min(68, cursorFrac * 100 + 4))}%`,
+                        bottom: tooltipNearBottom ? `${Math.max(6, Math.min(28, (1 - cursorFrac) * 100 + 5))}%` : 'auto',
+                        zIndex: 5000,
                         pointerEvents: 'none',
                         bgcolor: surface,
                         border: `1px solid ${border}`,
                         borderRadius: 1,
-                        boxShadow: 3,
+                        boxShadow: '0 12px 28px rgba(0,0,0,0.55)',
                         px: 0.85,
                         py: 0.6,
                         maxWidth: '96%',
@@ -875,6 +937,74 @@ function StripConfigDialog({ open, onClose, strip, stripIndex, onSave, channels,
     );
 }
 
+function CustomRangeDialog({ open, onClose, onApply, initialFromMs, initialToMs, surface, border, text, subText }) {
+    const now = Date.now();
+    const [fromValue, setFromValue] = useState(() => toDateTimeLocalValue(initialFromMs || now - 60 * 60 * 1000));
+    const [toValue, setToValue] = useState(() => toDateTimeLocalValue(initialToMs || now));
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        if (!open) return;
+        const fallbackNow = Date.now();
+        setFromValue(toDateTimeLocalValue(initialFromMs || fallbackNow - 60 * 60 * 1000));
+        setToValue(toDateTimeLocalValue(initialToMs || fallbackNow));
+        setError('');
+        // Only reset fields when the dialog opens. The parent live clock re-renders every
+        // second, and including initialToMs here makes the "To" picker jump while selecting.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
+
+    const apply = () => {
+        const fromMs = parseDateTimeLocalValue(fromValue);
+        const toMs = parseDateTimeLocalValue(toValue);
+        if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+            setError('Please select valid from and to date/time.');
+            return;
+        }
+        if (toMs <= fromMs) {
+            setError('To time must be after from time.');
+            return;
+        }
+        const label = `${formatAxisTime(fromMs, true)} - ${formatAxisTime(toMs, true)}`;
+        onApply({ fromMs, toMs, label });
+    };
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth PaperProps={{ sx: { bgcolor: surface, color: text, border: `1px solid ${border}` } }}>
+            <DialogTitle sx={{ fontWeight: 900, borderBottom: `1px solid ${border}`, fontSize: '1rem' }}>
+                Custom EDR Time Range
+            </DialogTitle>
+            <DialogContent dividers sx={{ borderColor: border, pt: 2 }}>
+                <TextField
+                    fullWidth
+                    label="From"
+                    type="datetime-local"
+                    value={fromValue}
+                    onChange={(e) => setFromValue(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ mb: 2 }}
+                />
+                <TextField
+                    fullWidth
+                    label="To"
+                    type="datetime-local"
+                    value={toValue}
+                    onChange={(e) => setToValue(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                />
+                {error && <Typography sx={{ color: '#f87171', fontSize: '0.8rem', fontWeight: 800, mt: 1.5 }}>{error}</Typography>}
+                <Typography sx={{ color: subText, fontSize: '0.76rem', mt: 1.5 }}>
+                    History loads from the Central Server database for the selected time.
+                </Typography>
+            </DialogContent>
+            <DialogActions sx={{ borderTop: `1px solid ${border}`, p: 1.5 }}>
+                <Button onClick={onClose} sx={{ color: subText, fontWeight: 800 }}>Cancel</Button>
+                <Button variant="contained" onClick={apply} sx={{ fontWeight: 900 }}>Apply Range</Button>
+            </DialogActions>
+        </Dialog>
+    );
+}
+
 // ---------------------------------------------------------------------------
 // EdrView main
 // ---------------------------------------------------------------------------
@@ -893,14 +1023,18 @@ export default function EdrView({
 }) {
     const theme = useTheme();
     const isCompact = mode === 'compact';
+    const initial = useMemo(() => loadPersisted(storageKey, defaultStrips, rightReadouts), [storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    const [customWindow, setCustomWindow] = useState(initial.customWindow);
+    const [customOpen, setCustomOpen] = useState(false);
     // OFFLINE REPLAY mode: when a fixed window {fromMs,toMs,label} is supplied we seed
     // from a FIXED RANGE (api.rigHistoryRange) instead of the rolling history, do NOT
     // ingest live updates, and pin the index domain to [fromMs,toMs] (an EDR replaying a
     // PAST well run). When null, behaviour is EXACTLY the live path as before.
-    const offline = !!(replayWindow && Number.isFinite(Number(replayWindow.fromMs)) && Number.isFinite(Number(replayWindow.toMs)));
-    const winFromMs = offline ? Number(replayWindow.fromMs) : null;
-    const winToMs = offline ? Number(replayWindow.toMs) : null;
-    const winLabel = replayWindow?.label;
+    const activeWindow = replayWindow || customWindow;
+    const offline = !!(activeWindow && Number.isFinite(Number(activeWindow.fromMs)) && Number.isFinite(Number(activeWindow.toMs)));
+    const winFromMs = offline ? Number(activeWindow.fromMs) : null;
+    const winToMs = offline ? Number(activeWindow.toMs) : null;
+    const winLabel = activeWindow?.label;
     // Central live payload (edge `rig_data` shape) for this rig â€” polled by RigDataProvider.
     const { data: liveData } = useRigData();
 
@@ -914,7 +1048,6 @@ export default function EdrView({
     const subText = theme.palette.text.secondary || (isDark ? '#94a3b8' : '#475569');
     const accent = theme.palette.primary.main;
 
-    const initial = useMemo(() => loadPersisted(storageKey, defaultStrips, rightReadouts), [storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
     const [strips, setStrips] = useState(initial.strips);
     const [indexMode, setIndexMode] = useState(initial.indexMode);
     // Configurable TOP readouts (full mode). Defaults to the rightReadouts prop.
@@ -943,17 +1076,18 @@ export default function EdrView({
         if (idx >= 0) {
             setIndexMode('time');
             setTimeWinIdx(idx);
+            if (!replayWindow) setCustomWindow(null);
             setScrollOffset(0);
         }
-    }, [timeWindowLabel, syncTimeWindowLabel, hasSavedTimeWindow]);
+    }, [timeWindowLabel, syncTimeWindowLabel, hasSavedTimeWindow, replayWindow]);
 
     // Persist strip config + index mode + readout selection (same storageKey).
     useEffect(() => {
         if (!storageKey) return;
         try {
-            localStorage.setItem(storageKey, JSON.stringify({ strips, indexMode, readouts, timeWinIdx, depthSpanIdx }));
+            localStorage.setItem(storageKey, JSON.stringify({ strips, indexMode, readouts, timeWinIdx, depthSpanIdx, customWindow }));
         } catch (e) { /* best effort */ }
-    }, [storageKey, strips, indexMode, readouts, timeWinIdx, depthSpanIdx]);
+    }, [storageKey, strips, indexMode, readouts, timeWinIdx, depthSpanIdx, customWindow]);
 
     // Set of channels we need to fetch (all pens + readouts + depth band).
     const neededChannels = useMemo(() => {
@@ -963,7 +1097,10 @@ export default function EdrView({
         return Array.from(set);
     }, [strips, readouts, isCompact]);
 
-    const timeWindowMs = TIME_WINDOWS[timeWinIdx]?.ms ?? TIME_WINDOWS[0].ms;
+    const presetTimeWindowMs = TIME_WINDOWS[timeWinIdx]?.ms ?? TIME_WINDOWS[0].ms;
+    const timeWindowMs = offline && Number.isFinite(winFromMs) && Number.isFinite(winToMs)
+        ? Math.max(60 * 1000, winToMs - winFromMs)
+        : presetTimeWindowMs;
     const timeRange = TIME_WINDOWS[timeWinIdx]?.range ?? '-15m';
     const historyWindowMs = useMemo(() => {
         if (offline || indexMode !== 'time') return timeWindowMs;
@@ -986,22 +1123,31 @@ export default function EdrView({
     ), [neededChannels]);
 
     const historyReq = useRef(0);
+    const historyModeKey = offline ? `range:${winFromMs}-${winToMs}` : `minutes:${historyMinutes}`;
+    const historyCacheKey = useMemo(() => cacheKeyFor(rigId, neededChannels, historyModeKey), [rigId, neededChannels, historyModeKey]);
     const fetchHistory = useCallback(async () => {
         if (!rigId) return;
         const reqId = ++historyReq.current;
+        const cached = HISTORY_CACHE.get(historyCacheKey);
+        if (cached?.length) {
+            setData(cached);
+        }
         try {
             // Central history is per-rig + bucketed; rows are [{ t:epochms, "<metric>":v }].
             // OFFLINE: seed from the FIXED [fromMs,toMs] range (range mode); LIVE: rolling minutes.
+            const maxPoints = 240;
             const res = offline
-                ? await api.rigHistoryRange(rigId, neededChannels, winFromMs, winToMs)
-                : await api.rigHistoryMulti(rigId, neededChannels, historyMinutes);
+                ? await api.rigHistoryRange(rigId, neededChannels, winFromMs, winToMs, maxPoints)
+                : await api.rigHistoryMulti(rigId, neededChannels, historyMinutes, maxPoints);
             if (reqId !== historyReq.current) return;
-            setData(rowsToSamples(res?.rows));
+            const samples = rowsToSamples(res?.rows);
+            setHistoryCache(historyCacheKey, samples);
+            setData(samples);
         } catch (err) {
             if (reqId !== historyReq.current) return;
             console.error('EdrView: failed to load history', err);
         }
-    }, [rowsToSamples, neededChannels, historyMinutes, rigId, offline, winFromMs, winToMs]);
+    }, [rowsToSamples, neededChannels, historyMinutes, rigId, offline, winFromMs, winToMs, historyCacheKey]);
 
     // ---- Live point ingestion (shared socket) ----
     const ingest = useCallback((payload) => {
@@ -1033,7 +1179,11 @@ export default function EdrView({
     }, []);
 
     // History seed whenever the metric set / time window changes.
-    useEffect(() => { fetchHistory(); }, [fetchHistory]);
+    useEffect(() => {
+        const cached = HISTORY_CACHE.get(historyCacheKey);
+        if (cached?.length) setData(cached);
+        fetchHistory();
+    }, [fetchHistory, historyCacheKey]);
 
     // Keep the live EDR time axis moving even when telemetry is stale or missing.
     useEffect(() => {
@@ -1102,15 +1252,18 @@ export default function EdrView({
     const axisTicks = useMemo(() => {
         const [a, b] = indexDomain;
         const count = 6;
+        const showDateLabels = indexMode === 'time' && (offline || shouldShowDateOnAxis(a, b));
         return Array.from({ length: count + 1 }, (_, i) => {
             const frac = i / count;
             const v = a + frac * (b - a);
-            const label = indexMode === 'depth'
-                ? `${Math.round(v)}`
-                : new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-            return { frac, label };
+            if (indexMode === 'depth') return { frac, label: `${Math.round(v)}` };
+            return {
+                frac,
+                label: showDateLabels ? formatAxisClock(v) : formatAxisClock(v, true),
+                dateLabel: showDateLabels ? formatAxisDate(v) : ''
+            };
         });
-    }, [indexDomain, indexMode]);
+    }, [indexDomain, indexMode, offline]);
 
     // ---- Scroll handlers ----
     // One "page" of the visible window; a single rail click moves a half-window.
@@ -1287,12 +1440,20 @@ export default function EdrView({
 
                         <Box sx={{ display: 'flex', gap: 0.45, alignItems: 'center', flexWrap: 'wrap' }}>
                             {(indexMode === 'time' ? TIME_WINDOWS : DEPTH_SPANS).map((opt, i) => {
-                                const active = indexMode === 'time' ? i === timeWinIdx : i === depthSpanIdx;
+                                const active = indexMode === 'time' ? (!customWindow && i === timeWinIdx) : i === depthSpanIdx;
                                 return (
                                     <Button
                                         key={opt.label}
                                         size="small"
-                                        onClick={() => (indexMode === 'time' ? setTimeWinIdx(i) : setDepthSpanIdx(i))}
+                                        onClick={() => {
+                                            if (indexMode === 'time') {
+                                                setCustomWindow(null);
+                                                setTimeWinIdx(i);
+                                                setScrollOffset(0);
+                                            } else {
+                                                setDepthSpanIdx(i);
+                                            }
+                                        }}
                                         sx={{
                                             minWidth: isCompact ? 36 : 43,
                                             height: isCompact ? 31 : 38,
@@ -1313,19 +1474,28 @@ export default function EdrView({
                             })}
                         </Box>
 
-                        {!isCompact && (
-                            <Button size="small" variant="outlined" startIcon={<Clock size={16} />} sx={{ height: 38, textTransform: 'none', fontWeight: 900, color: text, borderColor: border }}>
+                        <>
+                            <Button
+                                size="small"
+                                variant={customWindow ? 'contained' : 'outlined'}
+                                startIcon={<Clock size={16} />}
+                                onClick={() => {
+                                    setIndexMode('time');
+                                    setCustomOpen(true);
+                                }}
+                                sx={{ height: 38, textTransform: 'none', fontWeight: 900, color: customWindow ? theme.palette.getContrastText(accent) : text, borderColor: border }}
+                            >
                                 Custom
                             </Button>
-                        )}
+                        </>
 
                         <Box sx={{ flex: 1 }} />
 
                         {offline ? (
-                            <MuiTooltip title="Offline replay - fixed recorded range">
+                            <MuiTooltip title={replayWindow ? 'Offline replay - fixed recorded range' : 'Custom history range'}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, px: 1, py: 0.45, borderRadius: 1, border: `1px solid ${border}`, bgcolor: `${accent}14` }}>
                                     <Clock size={13} color={accent} />
-                                    <Typography sx={{ color: accent, fontSize: '0.72rem', fontWeight: 900, letterSpacing: 0.5, textTransform: 'uppercase' }}>OFFLINE</Typography>
+                                    <Typography sx={{ color: accent, fontSize: '0.72rem', fontWeight: 900, letterSpacing: 0.5, textTransform: 'uppercase' }}>{replayWindow ? 'OFFLINE' : 'HISTORY'}</Typography>
                                     <Typography sx={{ color: subText, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>- {offlineLabel}</Typography>
                                 </Box>
                             </MuiTooltip>
@@ -1434,7 +1604,12 @@ export default function EdrView({
                             </Typography>
                             {axisTicks.map((t, i) => (
                                 <Box key={i} sx={{ position: 'absolute', left: 0, right: 0, top: `calc(22px + ${t.frac * 100}% * 0.88)`, transform: 'translateY(-50%)', px: 0.25 }}>
-                                    <Typography sx={{ fontSize: '0.62rem', color: text, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                                    {t.dateLabel && (
+                                        <Typography sx={{ fontSize: '0.54rem', color: subText, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', lineHeight: 1.05 }}>
+                                            {t.dateLabel}
+                                        </Typography>
+                                    )}
+                                    <Typography sx={{ fontSize: '0.62rem', color: text, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', lineHeight: 1.05 }}>
                                         {t.label}
                                     </Typography>
                                 </Box>
@@ -1507,7 +1682,12 @@ export default function EdrView({
                     </Typography>
                     {axisTicks.map((t, i) => (
                         <Box key={i} sx={{ position: 'absolute', left: 0, right: 0, top: `calc(22px + ${t.frac * 100}% * 0.88)`, transform: 'translateY(-50%)', px: 0.25 }}>
-                            <Typography sx={{ fontSize: isCompact ? '0.55rem' : '0.62rem', color: subText, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                            {t.dateLabel && (
+                                <Typography sx={{ fontSize: isCompact ? '0.48rem' : '0.52rem', color: subText, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', lineHeight: 1.05 }}>
+                                    {t.dateLabel}
+                                </Typography>
+                            )}
+                            <Typography sx={{ fontSize: isCompact ? '0.55rem' : '0.62rem', color: subText, textAlign: 'center', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', lineHeight: 1.05 }}>
                                 {t.label}
                             </Typography>
                         </Box>
@@ -1535,6 +1715,7 @@ export default function EdrView({
                                     samples={samples}
                                     indexMode={indexMode}
                                     indexDomain={indexDomain}
+                                    showDateLabels={offline}
                                     accentColor={accent}
                                     gridColor={gridColor}
                                     axisTextColor={subText}
@@ -1587,6 +1768,24 @@ export default function EdrView({
                     stripIndex={configStrip}
                     onSave={updateStrip}
                     channels={channels}
+                    surface={panelBg}
+                    border={border}
+                    text={text}
+                    subText={subText}
+                />
+            )}
+            {customOpen && (
+                <CustomRangeDialog
+                    open={customOpen}
+                    onClose={() => setCustomOpen(false)}
+                    onApply={(nextWindow) => {
+                        setCustomWindow(nextWindow);
+                        setIndexMode('time');
+                        setScrollOffset(0);
+                        setCustomOpen(false);
+                    }}
+                    initialFromMs={winFromMs || Date.now() - presetTimeWindowMs}
+                    initialToMs={winToMs || Date.now()}
                     surface={panelBg}
                     border={border}
                     text={text}

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Paper, Typography, Stack, Button, IconButton, Alert } from '@mui/material';
-import { Speed, Timeline, WaterDrop, Shield, Apps, Anchor, Add, Remove, AccessTime } from '@mui/icons-material';
+import { Speed, Timeline, WaterDrop, Shield, Apps, Anchor } from '@mui/icons-material';
 import { useRigData } from '../../../context/RigDataContext';
 import EdrView from '../EdrView';
 import { fmtNum } from '../../common';
@@ -77,8 +77,6 @@ const TREND_CHANNELS = {
 const TREND_LABELS = {
     cat: 'ENGINE', hpu: 'HPU', htd: 'HTD', mud: 'MUD', acs: 'ACS', catwalk: 'CATWALK', pct: 'PCT',
 };
-const RANGE_OPTIONS = ['5m', '30m', '1H', '6H', '12H'];
-
 const CAT_MAPS = {
     status: { '-1': 'UNKNOWN', 0: 'READY', 1: 'IN PROGRESS', 2: 'DONE', 3: 'EMERGENCY NOT OK', 4: 'NOT READY', 5: 'FAULT', 6: 'RUNNING + FAULT', 7: 'STOP FORCED' },
     sourceCmd: { 0: 'NONE', 1: 'LOCAL', 2: 'REMOTE', 3: 'MANUAL', 4: 'AUTO', 5: 'DCC', 6: '---' },
@@ -361,53 +359,24 @@ function StatusTile({ label, value }) {
 }
 function TrendPanel({ rigId, active }) {
     const channels = TREND_CHANNELS[active] || TREND_CHANNELS.cat;
-    const rangeKey = `crmf-equip-range-${active}-${rigId}`;
-    const loadRange = () => {
-        try {
-            const saved = localStorage.getItem(rangeKey);
-            return RANGE_OPTIONS.includes(saved) ? saved : '5m';
-        } catch (e) {
-            return '5m';
-        }
-    };
-    const [selectedRange, setSelectedRange] = useState(() => {
-        return loadRange();
-    });
     const strips = useMemo(() => [{
         title: TREND_LABELS[active] || 'ENGINE',
         pens: channels.map((channelId, i) => ({ channelId, color: [BLUE, ORANGE, GREEN, PURPLE][i % 4], min: 0, max: 100, enabled: true })),
     }], [active, channels]);
 
-    useEffect(() => {
-        setSelectedRange(loadRange());
-    }, [rangeKey]);
-
-    useEffect(() => {
-        try { localStorage.setItem(rangeKey, selectedRange); } catch (e) { /* best effort */ }
-    }, [rangeKey, selectedRange]);
-
     return (
         <Paper sx={{ height: 'calc(100vh - 245px)', minHeight: 650, p: 1.5, bgcolor: PANEL, borderColor: 'rgba(148,163,184,.24)', borderRadius: 1, display: 'flex', flexDirection: 'column' }}>
             <Typography fontWeight={900} sx={{ letterSpacing: 2, mb: 1 }}> {TREND_LABELS[active]} TRENDS</Typography>
-            <Stack direction="row" spacing={0.75} alignItems="center" mb={1.5}>
-                <IconButton size="small" sx={{ border: '1px solid rgba(148,163,184,.25)', borderRadius: 0.5 }}><Add fontSize="small" /></IconButton>
-                <IconButton size="small" sx={{ border: '1px solid rgba(148,163,184,.25)', borderRadius: 0.5 }}><Remove fontSize="small" /></IconButton>
-                {RANGE_OPTIONS.map((x) => (
-                    <Button
-                        key={x}
-                        size="small"
-                        variant={selectedRange === x ? 'contained' : 'outlined'}
-                        onClick={() => setSelectedRange(x)}
-                        sx={{ minWidth: 44, fontWeight: 900 }}
-                    >
-                        {x}
-                    </Button>
-                ))}
-                <Button size="small" variant="outlined" startIcon={<AccessTime />} sx={{ fontWeight: 900 }}>Custom</Button>
-            </Stack>
-            <Typography fontWeight={900} color="#22c55e" sx={{ fontSize: 13, mb: 1 }}>LIVE</Typography>
             <Box sx={{ flex: 1, minHeight: 0 }}>
-                <EdrView key={`equip-trend-v4-${active}`} mode="compact" rigId={rigId} storageKey={`crmf-equip-v4-${active}-${rigId}`} defaultStrips={strips} channels={channels} hideToolbar timeWindowLabel={selectedRange} syncTimeWindowLabel />
+                <EdrView
+                    key={`equip-trend-v5-${active}`}
+                    mode="compact"
+                    rigId={rigId}
+                    storageKey={`crmf-equip-v5-${active}-${rigId}`}
+                    defaultStrips={strips}
+                    channels={channels}
+                    timeWindowLabel="5m"
+                />
             </Box>
         </Paper>
     );
@@ -501,11 +470,12 @@ function ReadoutPanel({ title, value, unit, color = BLUE, subtitle, max, min = 0
     );
 }
 
-function DarkValueBox({ label, value, unit, color = BLUE }) {
+function DarkValueBox({ label, value, unit, color = BLUE, max, min = 0 }) {
     return (
-        <Box sx={{ bgcolor: '#0f172a', borderRadius: 0.75, p: 1.5, minHeight: 100, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+        <Box sx={{ bgcolor: '#0f172a', borderRadius: 0.75, p: 1.5, minHeight: 112, display: 'grid', alignContent: 'center', textAlign: 'center' }}>
             <Typography fontWeight={900} sx={{ color, fontSize: 30, lineHeight: 1 }}>{value}</Typography>
             <Typography color="text.secondary">{label} {unit ? `(${unit})` : ''}</Typography>
+            <ValueBar value={value} unit={unit} color={color} max={max} min={min} />
         </Box>
     );
 }
@@ -516,7 +486,7 @@ function TankVolumesPanel({ fluid }) {
         <Paper sx={{ p: 1.7, bgcolor: '#0f172a', borderColor: 'rgba(148,163,184,.24)', borderRadius: 1 }}>
             <Typography sx={{ fontSize: 20, mb: 1.5 }}>MUD TANK INDIVIDUAL VOLUMES</Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
-                {tanks.map((n) => <DarkValueBox key={n} label={`TANK ${n}`} value={val(fluid[`tank_${n}`] ?? fluid[`pit_volume_${n}`], 2, '0.00')} unit="m3" color="#fff" />)}
+                {tanks.map((n) => <DarkValueBox key={n} label={`TANK ${n}`} value={val(fluid[`tank_${n}`] ?? fluid[`pit_volume_${n}`], 2, '0.00')} unit="m3" color="#fff" max={120} />)}
             </Box>
         </Paper>
     );
@@ -592,18 +562,18 @@ function MudPage({ d }) {
     return <>
         <Box sx={{ mb: 2 }}><Typography variant="h5" fontWeight={900} color={BLUE}>Pump Systems</Typography></Box>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(5, minmax(0, 1fr))' }, gap: 1.5, mb: 3 }}>
-            <ReadoutPanel title="PUMP SPM" value={val(g.spm)} unit="SPM" color="#f472b6" />
-            <ReadoutPanel title="PRESSURE" value={val(g.pressure)} unit="bar" color="#ff4d57" />
-            <ReadoutPanel title="FLOW OUT" value={val(g.flow_out ?? g.flow_out_percentage)} unit="%" color={GREEN} />
-            <ReadoutPanel title="INLET FLOW" value={val(g.flow_in)} unit="Lt/min" color="#3b82f6" />
-            <ReadoutPanel title="TOTAL STROKES" value={val(g.total_strokes)} unit="ct" color={PURPLE} subtitle="Lifetime count" />
+            <ReadoutPanel title="PUMP SPM" value={val(g.spm)} unit="SPM" color="#f472b6" max={200} />
+            <ReadoutPanel title="PRESSURE" value={val(g.pressure)} unit="bar" color="#ff4d57" max={500} />
+            <ReadoutPanel title="FLOW OUT" value={val(g.flow_out ?? g.flow_out_percentage)} unit="%" color={GREEN} max={100} />
+            <ReadoutPanel title="INLET FLOW" value={val(g.flow_in)} unit="Lt/min" color="#3b82f6" max={3000} />
+            <ReadoutPanel title="TOTAL STROKES" value={val(g.total_strokes)} unit="ct" color={PURPLE} subtitle="Lifetime count" max={50000} />
         </Box>
         <Box sx={{ mb: 2 }}><Typography variant="h5" fontWeight={900} color={BLUE}>Tank & Fluid Systems</Typography></Box>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5, mb: 1.5 }}>
-            <ReadoutPanel title="ACTIVE VOLUME" value={val(fl.total_tank_volume, 1, '0.0')} unit="m3" color="#0ea5e9" />
-            <ReadoutPanel title="VOLUME GAIN/LOSS" value={val(fl.tank_gain_loss, 2, '0.00')} unit="m3" color={GREEN} subtitle="Gaining" />
-            <ReadoutPanel title="TRIP TANK VOLUME" value={val(fl.trip_tank, 1, '0.0')} unit="m3" color="#6366f1" />
-            <ReadoutPanel title="TRIP GAIN/LOSS" value={val(fl.trip_tank_gain_loss, 1, '0.0')} unit="%" color={GREEN} />
+            <ReadoutPanel title="ACTIVE VOLUME" value={val(fl.total_tank_volume, 1, '0.0')} unit="m3" color="#0ea5e9" max={500} />
+            <ReadoutPanel title="VOLUME GAIN/LOSS" value={val(fl.tank_gain_loss, 2, '0.00')} unit="m3" color={GREEN} subtitle="Gaining" min={-50} max={50} />
+            <ReadoutPanel title="TRIP TANK VOLUME" value={val(fl.trip_tank, 1, '0.0')} unit="m3" color="#6366f1" max={50} />
+            <ReadoutPanel title="TRIP GAIN/LOSS" value={val(fl.trip_tank_gain_loss, 1, '0.0')} unit="%" color={GREEN} max={100} />
         </Box>
         <TankVolumesPanel fluid={fl} />
     </>;
