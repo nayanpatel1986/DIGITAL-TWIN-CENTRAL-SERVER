@@ -405,7 +405,7 @@ function normalizeBatch(ws, msg) {
 async function ingestEtpMessage(ws, msg) {
     const batch = normalizeBatch(ws, msg);
     if (!batch) return false;
-    const effectiveToken = process.env.INGEST_TOKEN || 'AHWR-ETP-2026' || ws.etpToken;
+    const effectiveToken = ws.etpToken || process.env.INGEST_TOKEN || '';
     setStatus({ lastAuthDebug: 'rig=' + (batch.deviceId || '') + ' tokenLen=' + String(effectiveToken || '').length + ' envLen=' + String(process.env.INGEST_TOKEN || '').length + ' matchEnv=' + (effectiveToken === process.env.INGEST_TOKEN) });
     const result = await ingestBatch({ rigId: batch.deviceId, token: effectiveToken, schemaVersion: batch.schemaVersion }, batch);
     if (!result.ok) {
@@ -536,7 +536,7 @@ function attach(server, nextConfig = {}) {
         try {
             const url = requestUrl(req);
             if (url.pathname !== path && url.pathname !== '/') return;
-            const expected = String(config.etp20_server_token || process.env.INGEST_TOKEN || 'AHWR-ETP-2026');
+            const expected = String(config.etp20_server_token || process.env.INGEST_TOKEN || '');
             const token = tokenFrom(req);
             if (expected && token !== expected) {
                 status.rejectedCount += 1;
@@ -545,7 +545,7 @@ function attach(server, nextConfig = {}) {
                 return;
             }
             wss.handleUpgrade(req, socket, head, (ws) => {
-                ws.etpToken = token || process.env.INGEST_TOKEN || config.etp20_server_token || '';
+                ws.etpToken = token || '';
                 ws.etpDeviceId = url.searchParams.get('deviceId') || url.searchParams.get('rigId') || req.headers['x-device-id'] || req.headers['x-rig-id'] || '';
                 if (url.pathname === '/') setStatus({ lastMessageSummary: 'Accepted ETP client on / alias; preferred path is /etp' });
                 wss.emit('connection', ws, req);

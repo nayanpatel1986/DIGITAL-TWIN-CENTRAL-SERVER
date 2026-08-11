@@ -417,9 +417,8 @@ function buildApiRouter() {
         }
         const dup = await query('SELECT 1 FROM rigs WHERE rig_id = $1', [rigId]);
         if (dup.rows.length) throw Object.assign(new Error('rig already exists'), { status: 409 });
-        // Use one fixed shared ingest token for all rigs. This keeps ETP onboarding simple:
-        // every edge uses the same permanent token and identifies itself by deviceId.
-        const deviceToken = process.env.INGEST_TOKEN || 'AHWR-ETP-2026';
+        const providedToken = String(b.deviceToken || '').trim();
+        const deviceToken = providedToken || crypto.randomBytes(24).toString('base64url');
         await query(
             `INSERT INTO rigs (rig_id, name, section, asset_unit, field, latitude, longitude, device_token, status, schema_version)
              VALUES ($1,$2,'Workover Services',$3,$4,$5,$6,$7,'pending','1.0')`,
@@ -429,7 +428,7 @@ function buildApiRouter() {
             `INSERT INTO deployment_status (rig_id, gate, commissioning)
              VALUES ($1,'gate0','planned') ON CONFLICT (rig_id) DO NOTHING`, [rigId]);
         await query('INSERT INTO audit_log (actor, action, target, detail) VALUES ($1,$2,$3,$4)',
-            [req.user.username, 'rig.create', rigId, { name, assetUnit: b.assetUnit || null, field: b.field || null }]).catch(() => {});
+            [req.user.username, 'rig.create', rigId, { name, assetUnit: b.assetUnit || null, field: b.field || null, tokenProvided: Boolean(providedToken) }]).catch(() => {});
 
         // Reveal the device token ONCE to the creating admin so it can be set as
         // DEVICE_TOKEN on the rig's edge node. It is not exposed again by the API.
@@ -443,15 +442,15 @@ function buildApiRouter() {
             [req.user.username, 'rig.delete', rigId, {}]).catch(() => {});
         return { ok: true };
     }));
-    // Re-apply the fixed shared token. Admin-only + audited. Returns the same
-    // permanent token used by all ETP edge rigs.
+    // Rotate the per-rig device token. Admin-only + audited. Returns the new
+    // token once so it can be configured on the rig edge server.
     r.post('/rigs/:id/rotate-token', requireRoleAudited('admin'), wrap(async (req) => {
         const rigId = req.params.id;
-        const deviceToken = process.env.INGEST_TOKEN || 'AHWR-ETP-2026';
+        const deviceToken = crypto.randomBytes(24).toString('base64url');
         const { rowCount } = await query('UPDATE rigs SET device_token = $1 WHERE rig_id = $2', [deviceToken, rigId]);
         if (!rowCount) throw Object.assign(new Error('rig not found'), { status: 404 });
         await query('INSERT INTO audit_log (actor, action, target, detail) VALUES ($1,$2,$3,$4)',
-            [req.user.username, 'rig.rotate_token', rigId, { fixedSharedToken: true }]).catch(() => {});
+            [req.user.username, 'rig.rotate_token', rigId, { perRigToken: true }]).catch(() => {});
         return { device_token: deviceToken };
     }));
 
@@ -465,8 +464,8 @@ function buildApiRouter() {
             webUrl: `http://${host}:${webPort}`,
             ingestUrl: `http://${host}:${ingestPort}`,
             etpUrl: `ws://${host}:${ingestPort}/etp`,
-            etpUrlWithToken: `ws://${host}:${ingestPort}/etp?token=${encodeURIComponent(process.env.INGEST_TOKEN || 'AHWR-ETP-2026')}`,
-            token: process.env.INGEST_TOKEN || 'AHWR-ETP-2026',
+            etpUrlWithToken: process.env.INGEST_TOKEN ? `ws://${host}:${ingestPort}/etp?token=${encodeURIComponent(process.env.INGEST_TOKEN)}` : '',
+            token: process.env.INGEST_TOKEN || '',
         };
     }));
     // ----- Platform settings (proposal section 6.5) - read (auth), write (admin, audited) -----

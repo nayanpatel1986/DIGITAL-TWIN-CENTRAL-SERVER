@@ -27,7 +27,7 @@ const DEFAULTS = {
     etp20_read_only: true,
     etp20_server_enabled: true,
     etp20_server_path: '/etp',
-    etp20_server_token: process.env.INGEST_TOKEN || 'AHWR-ETP-2026',
+    etp20_server_token: process.env.INGEST_TOKEN || '',
 };
 const BOUNDS = {
     retention_days: [1, 36500],
@@ -149,9 +149,13 @@ async function seedDefaults() {
             [KEY, JSON.stringify({
                 etp20_server_enabled: true,
                 etp20_server_path: '/etp',
-                etp20_server_token: process.env.INGEST_TOKEN || 'AHWR-ETP-2026',
+                etp20_server_token: process.env.INGEST_TOKEN || '',
             })]);
-        const s = await getSettings({ revealSecrets: true });
+        await query(
+            `UPDATE app_settings
+                SET value = jsonb_set(value, '{etp20_server_token}', '""'::jsonb), updated_by = 'system', updated_at = now()
+              WHERE key = $1 AND value->>'etp20_server_token' = 'AHWR-ETP-2026'`,
+            [KEY]);        const s = await getSettings({ revealSecrets: true });
         if (typeof fleet.setOfflineSec === 'function') fleet.setOfflineSec(s.offline_sec);
     } catch (e) {
         console.warn('[settings] seedDefaults skipped:', e.message);

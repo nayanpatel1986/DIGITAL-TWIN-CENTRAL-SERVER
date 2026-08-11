@@ -573,9 +573,10 @@ async function ingestBatch({ rigId, token, schemaVersion }, batch) {
         const receivedTs = Date.now();
         const latestMs = snap ? tsMillis(snap.ts) : NaN;
         const createdMs = tsMillis(batch.createdAt);
-        // Dashboard freshness is central receive freshness, so a PLC/edge timestamp
-        // offset does not make the central live page appear 5-10 seconds behind.
-        const latestTs = receivedTs;
+        // Dashboard freshness must follow the snapshot timestamp, not only the
+        // central receive time. Otherwise an edge can keep replaying stale PLC
+        // values and the fleet view will incorrectly show the rig as online.
+        const latestTs = Number.isFinite(latestMs) ? latestMs : (Number.isFinite(createdMs) ? createdMs : receivedTs);
         const presentMetrics = snap ? Object.keys(snap.values) : [];
         const health = computeHealth({ latestTs, presentMetrics });
 

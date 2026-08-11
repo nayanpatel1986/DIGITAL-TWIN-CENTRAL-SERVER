@@ -124,13 +124,15 @@ function socketAuth(socket, next) {
             const deviceId = String(auth.deviceId || '').trim();
             const token = String(auth.token || '').trim();
             if (!deviceId || !token) return next(new Error('unauthorized'));
-            const shared = process.env.INGEST_TOKEN || 'AHWR-ETP-2026';
+            const shared = process.env.INGEST_TOKEN || '';
             const { rows } = await query('SELECT device_token FROM rigs WHERE rig_id = $1', [deviceId]);
-            const expected = rows[0]?.device_token || shared;
-            if (token !== shared && token !== expected) return next(new Error('unauthorized'));
-            socket.edgeRigId = deviceId;
-            socket.clientType = 'edge';
-            return next();
+            const expected = rows[0]?.device_token || '';
+            if ((shared && token === shared) || (expected && token === expected)) {
+                socket.edgeRigId = deviceId;
+                socket.clientType = 'edge';
+                return next();
+            }
+            return next(new Error('unauthorized'));
         }
         const token = auth.token;
         const user = token && verify(token);

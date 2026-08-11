@@ -376,7 +376,7 @@ export default function Settings() {
                                 <Button variant="contained" startIcon={<ContentCopy />} disabled={!networkUrls?.etpUrl} onClick={() => copyUrl('etp', networkUrls?.etpUrl)}>{urlCopied === 'etp' ? 'Copied' : 'Copy'}</Button>
                             </Stack>
                             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                                Token for Edge rigs: {networkUrls?.token || 'AHWR-ETP-2026'}
+                                Edge token is per rig. Use the same Rig ID and Device token entered in Add rig on the edge server.
                             </Typography>
                         </Paper>
                         <Grid container spacing={2}>
@@ -524,8 +524,8 @@ export default function Settings() {
                                 onChange={(e) => setDraft({ ...draft, longitude: e.target.value })} />
                         </Grid>
                         <Grid item xs={12}>
-                            <TextField size="small" fullWidth label="Device token (fixed shared)" value={draft.deviceToken}
-                                autoComplete="off" helperText="Edge sync credential. Leave blank to auto-generate on the backend — it is shown once after save."
+                            <TextField size="small" fullWidth label="Device token" value={draft.deviceToken}
+                                autoComplete="off" helperText="Edge sync credential for this Rig ID. Type the same token on the edge server, or leave blank to auto-generate once."
                                 onChange={(e) => setDraft({ ...draft, deviceToken: e.target.value })} />
                         </Grid>
                     </Grid>
