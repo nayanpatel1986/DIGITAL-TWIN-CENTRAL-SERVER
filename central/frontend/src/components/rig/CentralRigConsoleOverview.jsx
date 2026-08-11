@@ -206,6 +206,18 @@ const TREND_DEFS = [
     { id: 'bitDepth', label: 'BIT DEPTH', unit: 'm', color: '#38bdf8', d: 1, metric: 'drilling.bit_depth', get: (r) => num(r.drilling?.bit_depth ?? r.bit_depth) },
     { id: 'rop', label: 'ROP', unit: 'm/hr', color: '#0ea5e9', d: 1, metric: 'drilling.rop', get: (r) => num(r.drilling?.rop) },
 ];
+const TREND_GROUPS = [
+    { label: 'DRILLING', ids: ['hookLoad', 'wob', 'bitDepth', 'holeDepth', 'rop'] },
+    { label: 'DRAWWORKS', ids: ['blockPos'] },
+    { label: 'HTD', ids: ['htdRpm', 'htdTorque', 'htdStatus', 'htdGear', 'htdElevator'] },
+    { label: 'PCT', ids: ['pctTorque', 'pctLastTorque', 'pctStatus', 'pctSequence', 'pctDolly', 'pctClampUpP', 'pctClampLowP'] },
+    { label: 'HPU', ids: ['hpuPress', 'hpuAuxPress', 'hpuOilTemp', 'hpuOilLevel', 'hpuStatus'] },
+    { label: 'CAT ENGINE', ids: ['genLoad', 'genRpm', 'genCoolant', 'genOilPress', 'genStatus'] },
+    { label: 'CIRCULATION', ids: ['circPress', 'spm', 'flowIn', 'flowOut', 'tripTank', 'gainLoss'] },
+    { label: 'CATWALK', ids: ['cwkStatus', 'cwkCarrier', 'cwkClamp', 'cwkClampP', 'cwkClampF'] },
+    { label: 'ACS', ids: ['acsCrown', 'acsFloor', 'acsBottom', 'acsStatus'] },
+    { label: 'WELL CONTROL', ids: ['tubingP', 'casingP', 'accumP', 'annularP'] },
+];
 const TREND_MAX_POINTS = 1500;
 const OVERVIEW_TREND_SELECTION_KEY = 'rig-overview-last12h-trends';
 const DEFAULT_OVERVIEW_TREND_IDS = ['hookLoad', 'blockPos', 'htdRpm', 'htdTorque', 'pctTorque', 'hpuPress', 'genLoad'];
@@ -1101,56 +1113,103 @@ const primaryPanelHeight = Math.round(overviewBodyMinHeight * (compactOverview ?
                     <div style={{ ...card, padding: '13px 14px 18px', flex: 1, minHeight: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 11 }}>
                             <span style={sectionLabel}>LAST 12H TRENDS</span>
-                            <div ref={trendSelectorRef} style={{ position: 'relative' }}>
+                            <div ref={trendSelectorRef} style={{ position: 'relative', transform: 'translateY(-5px)' }}>
                                 <button
                                     type="button"
                                     onClick={() => setTrendSelectorOpen((open) => !open)}
                                     style={{
                                         cursor: 'pointer',
-                                        border: `1px solid ${c.line}`,
-                                        borderRadius: 8,
-                                        padding: '5px 9px',
+                                        border: `2px solid ${A.info}`,
+                                        borderRadius: 10,
+                                        width: 38,
+                                        height: 32,
+                                        padding: 0,
                                         color: c.txt,
-                                        background: c.bg3,
-                                        fontSize: 10,
-                                        fontWeight: 800,
-                                        letterSpacing: '.04em',
+                                        background: c.bg2,
+                                        fontSize: 12,
+                                        fontWeight: 900,
+                                        letterSpacing: '.02em',
                                         userSelect: 'none',
-                                        fontFamily: SANS
+                                        fontFamily: SANS,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        boxShadow: trendSelectorOpen ? `0 0 0 2px ${A.info}22` : 'none'
                                     }}
                                 >
-                                    SELECT ({selectedTrendDefs.length})
+                                    <span style={{ position: 'relative', width: 22, height: 22, display: 'inline-block' }}>
+                                        <span style={{ position: 'absolute', left: 2, right: 2, top: 5, height: 2, background: c.txt2 }} />
+                                        <span style={{ position: 'absolute', left: 2, right: 2, top: 11, height: 2, background: c.txt2 }} />
+                                        <span style={{ position: 'absolute', left: 2, right: 2, top: 17, height: 2, background: c.txt2 }} />
+                                        <span style={{ position: 'absolute', left: 6, top: 2, width: 4, height: 8, borderRadius: 2, background: A.info }} />
+                                        <span style={{ position: 'absolute', right: 6, top: 8, width: 4, height: 8, borderRadius: 2, background: A.info }} />
+                                    </span>
                                 </button>
                                 {trendSelectorOpen && <div
                                     style={{
                                         position: 'absolute',
-                                        top: 30,
+                                        top: 34,
                                         left: 0,
                                         zIndex: 20,
-                                        minWidth: 210,
-                                        padding: 10,
-                                        borderRadius: 10,
+                                        width: 360,
+                                        maxHeight: 560,
+                                        overflowY: 'auto',
+                                        padding: '10px 0',
+                                        borderRadius: 0,
                                         border: `1px solid ${c.line2}`,
                                         background: c.bg2,
                                         boxShadow: '0 14px 32px rgba(0,0,0,.42)',
-                                        display: 'grid',
-                                        gap: 7
+                                        display: 'block'
                                     }}
                                 >
-                                    {TREND_DEFS.map((def) => {
-                                        const checked = selectedTrendIds.includes(def.id);
+                                    <div style={{ padding: '8px 24px 10px', color: c.txt2, fontSize: 13, fontWeight: 900, letterSpacing: '.07em' }}>
+                                        SELECT PARAMETERS ({selectedTrendDefs.length})
+                                    </div>
+                                    {TREND_GROUPS.map((group) => {
+                                        const defs = group.ids
+                                            .map((id) => TREND_DEFS.find((def) => def.id === id))
+                                            .filter(Boolean);
+                                        if (!defs.length) return null;
                                         return (
-                                            <label key={def.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: c.txt2, fontSize: 11, fontWeight: 800 }}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={() => toggleTrendSelection(def.id)}
-                                                    style={{ accentColor: def.color }}
-                                                />
-                                                <span style={{ width: 8, height: 8, borderRadius: 2, background: def.color, boxShadow: `0 0 6px ${def.color}` }} />
-                                                <span>{def.label}</span>
-                                                <span style={{ marginLeft: 'auto', color: c.txt3, fontFamily: MONO, fontSize: 9 }}>{def.unit}</span>
-                                            </label>
+                                            <div key={group.label}>
+                                                <div style={{ padding: '10px 24px 8px', color: c.txt2, fontSize: 14, fontWeight: 900, letterSpacing: '.05em' }}>
+                                                    {group.label}
+                                                </div>
+                                                {defs.map((def) => {
+                                                    const checked = selectedTrendIds.includes(def.id);
+                                                    return (
+                                                        <label
+                                                            key={def.id}
+                                                            style={{
+                                                                display: 'grid',
+                                                                gridTemplateColumns: '28px 18px minmax(0, 1fr) 52px',
+                                                                alignItems: 'center',
+                                                                gap: 8,
+                                                                minHeight: 48,
+                                                                padding: '0 24px 0 28px',
+                                                                cursor: 'pointer',
+                                                                color: c.txt,
+                                                                background: checked ? `${A.info}26` : 'transparent',
+                                                                fontSize: 19,
+                                                                fontWeight: 500,
+                                                                userSelect: 'none'
+                                                            }}
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => toggleTrendSelection(def.id)}
+                                                                style={{ width: 22, height: 22, accentColor: A.info, margin: 0 }}
+                                                            />
+                                                            <span style={{ width: 10, height: 10, borderRadius: 3, background: def.color, boxShadow: `0 0 7px ${def.color}` }} />
+                                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                                {def.label}{def.unit ? ` (${def.unit})` : ''}
+                                                            </span>
+                                                            <span style={{ color: c.txt3, fontFamily: MONO, fontSize: 10, textAlign: 'right' }}>{def.unit}</span>
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
                                         );
                                     })}
                                 </div>}
