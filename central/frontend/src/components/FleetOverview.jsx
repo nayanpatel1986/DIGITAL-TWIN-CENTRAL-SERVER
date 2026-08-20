@@ -9,7 +9,6 @@ import { ChatBubbleOutline, OpenInNew, Search } from '@mui/icons-material';
 import { useFleet } from '../context/FleetContext';
 import { PriorityChip } from './common';
 import { STATUS_COLOR } from '../theme';
-import FleetMap from './FleetMap';
 import { api } from '../api';
 import { socket } from '../socket';
 
@@ -198,17 +197,10 @@ export default function FleetOverview() {
     }), [fleet, filter, unit, q]);
 
     return (
-        // Full-height two-pane: interactive map (left) + rig tiles (right). The status
-        // bubbles in the top app bar already carry the fleet KPIs, so no redundant cards.
-        <Box sx={{ height: '100%', display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 2, minHeight: 0 }}>
+        // Full-height rig list. The top app bar already carries fleet KPIs.
+        <Box sx={{ height: '100%', display: 'flex', minHeight: 0 }}>
             <FleetMessagePopup onOpenCentre={() => setCentreOpenSignal((v) => v + 1)} />
-            {/* LEFT — smaller interactive pan/zoom map; click a marker to open the rig. */}
-            <Box sx={{ flex: { md: '0.85 1 0' }, minHeight: { xs: 300, md: 0 }, display: 'flex' }}>
-                <FleetMap rigs={fleet} />
-            </Box>
-
-            {/* RIGHT — denser grid of compact rig tiles, filling the (now larger) pane. */}
-            <Box sx={{ flex: { md: '1.7 1 0' }, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                 <Paper sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <Box sx={{ p: 1.5, flex: '0 0 auto' }}>
                         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>

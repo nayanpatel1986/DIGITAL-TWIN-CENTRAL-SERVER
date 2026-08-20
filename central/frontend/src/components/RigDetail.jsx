@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Box, Grid, Paper, Typography, Stack, Button, Link as MLink, Alert,
@@ -20,6 +20,11 @@ import RigAlarmsPanel from './rig/panels/RigAlarmsPanel';
 import RigReportPanel from './rig/panels/RigReportPanel';
 import RigMaintenancePanel from './rig/panels/RigMaintenancePanel';
 import CentralRigConsoleOverview from './rig/CentralRigConsoleOverview';
+const RomRigOverview = lazy(() => import('./RomDashboard/Dashboard'));
+const RomEdrPage = lazy(() => import('./EDR/EDR_STANDALONE'));
+const RomEnginePage = lazy(() => import('./Engine/EngineDashboard'));
+const RomWellControlPage = lazy(() => import('./WellControl/WellControlDashboard'));
+const RomFishingPage = lazy(() => import('./Fishing/FishingDashboard'));
 
 // Per-rig AHWR-50-TWIN style pages. These pages stay inside the central rig route;
 // the fleet dashboard and other central modules keep their CRMF shell.
@@ -32,6 +37,13 @@ const HMI_TABS = [
     { key: 'alarms', label: 'Alarms', el: RigAlarmsPanel },
     { key: 'reports', label: 'Reports & Logs', el: RigReportPanel },
     { key: 'maintenance', label: 'Maintenance', el: RigMaintenancePanel },
+];
+const ROM_HMI_TABS = [
+    { key: 'rom-overview', label: 'Rig Overview', menuLabel: 'Rig Overview', el: RomRigOverview, icon: <GridView fontSize="small" /> },
+    { key: 'rom-edr', label: 'EDR', menuLabel: 'EDR', el: RomEdrPage, icon: <ShowChart fontSize="small" /> },
+    { key: 'rom-engine', label: 'Engine & Power', menuLabel: 'Engine & Power', el: RomEnginePage, icon: <Speed fontSize="small" /> },
+    { key: 'rom-well-control', label: 'Well Control', menuLabel: 'Well Control', el: RomWellControlPage, icon: <Storage fontSize="small" /> },
+    { key: 'rom-fishing', label: 'Fishing Operation', menuLabel: 'Fishing Operation', el: RomFishingPage, icon: <Assignment fontSize="small" /> },
 ];
 const HMI_MENU_META = {
     overview: { menuLabel: 'Rig Overview', icon: <GridView fontSize="small" /> },
@@ -305,10 +317,10 @@ function EdgeTwinTopBar({ rig, onBack, showKpiToggle, kpiOpen, onToggleKpis }) {
     );
 }
 
-function RigPageMenu({ tab, onTabChange }) {
+function RigPageMenu({ tab, onTabChange, tabs = HMI_TABS }) {
     const [anchor, setAnchor] = useState(null);
-    const active = HMI_TABS[tab] || HMI_TABS[0];
-    const meta = HMI_MENU_META[active.key] || { menuLabel: active.label, icon: <GridView fontSize="small" /> };
+    const active = tabs[tab] || tabs[0];
+    const meta = active.menuLabel || active.icon ? { menuLabel: active.menuLabel || active.label, icon: active.icon || <GridView fontSize="small" /> } : (HMI_MENU_META[active.key] || { menuLabel: active.label, icon: <GridView fontSize="small" /> });
     const close = () => setAnchor(null);
     const choose = (index) => {
         onTabChange(index);
@@ -331,8 +343,8 @@ function RigPageMenu({ tab, onTabChange }) {
                 onClose={close}
                 PaperProps={{ sx: { mt: 0.75, minWidth: 270, bgcolor: '#334155', border: '1px solid rgba(62,166,255,0.22)' } }}
             >
-                {HMI_TABS.map((item, index) => {
-                    const itemMeta = HMI_MENU_META[item.key] || { menuLabel: item.label, icon: <GridView fontSize="small" /> };
+                {tabs.map((item, index) => {
+                    const itemMeta = item.menuLabel || item.icon ? { menuLabel: item.menuLabel || item.label, icon: item.icon || <GridView fontSize="small" /> } : (HMI_MENU_META[item.key] || { menuLabel: item.label, icon: <GridView fontSize="small" /> });
                     return (
                         <MenuItem key={item.key} selected={index === tab} onClick={() => choose(index)} sx={{ py: 1.15, gap: 1.25, fontWeight: 800, '&.Mui-selected': { bgcolor: 'rgba(56,189,248,0.18)', color: 'primary.main' } }}>
                             <ListItemIcon sx={{ minWidth: 32, color: index === tab ? 'primary.main' : 'text.secondary' }}>{itemMeta.icon}</ListItemIcon>
@@ -345,7 +357,7 @@ function RigPageMenu({ tab, onTabChange }) {
     );
 }
 
-function RigStatusRow({ rig, tab, onTabChange }) {
+function RigStatusRow({ rig, tab, onTabChange, tabs = HMI_TABS }) {
     const { data: live } = useRigData();
     const opMode = findMetric(rig, 'drilling.operation_mode', 'OP.MODE');
     const acs = findMetric(rig, 'acs.status', 'ACS');
@@ -356,7 +368,7 @@ function RigStatusRow({ rig, tab, onTabChange }) {
     return (
         <Paper sx={{ px: 1.5, py: 0.75, mb: 1, borderRadius: 1, bgcolor: '#172235', borderColor: 'rgba(62,166,255,0.18)' }} variant="outlined">
             <Stack direction="row" spacing={1} alignItems="stretch" flexWrap={{ xs: 'wrap', lg: 'nowrap' }} useFlexGap>
-                <RigPageMenu tab={tab} onTabChange={onTabChange} />
+                <RigPageMenu tab={tab} onTabChange={onTabChange} tabs={tabs} />
                 <TwinKpi label="OP.MODE" value={opMode ? headerLabel('opMode', opMode.value) : 'IDLE'} />
                 <TwinKpi label="ACS" value={acs ? headerLabel('acs', acs.value) : 'UNKNOWN'} />
                 <TwinKpi label="HOLE DEPTH" value={holeDepth ? fmtNum(holeDepth.value, 2) : '--'} unit={holeDepth?.unit || 'm'} accent="success.main" sx={{ minWidth: 170 }} />
@@ -403,6 +415,11 @@ export default function RigDetail() {
     const [tab, setTab] = useState(0);   // AHWR-50-TWIN style rig pages
     const [kpiOpen, setKpiOpen] = useState(false);  // KPI strip on HMI tabs (default hidden)
 
+    useEffect(() => {
+        setTab(0);
+        setKpiOpen(false);
+    }, [id]);
+
     const load = useCallback(() => {
         api.rig(id).then(setRig).catch((e) => setErr(e?.response?.data?.error || 'failed to load rig'));
     }, [id]);
@@ -419,14 +436,20 @@ export default function RigDetail() {
     if (err) return <Alert severity="error">{err} Ã¢â‚¬â€ <MLink sx={{ cursor: 'pointer' }} onClick={() => nav('/')}>back to fleet</MLink></Alert>;
     if (!rig) return <Typography color="text.secondary">Loading {id}Ã¢â‚¬Â¦</Typography>;
 
+
     // The Overview tab renders its own KPI row, so the shared collapsible strip is only
     // for the HMI tabs (toggled via the "KPIs" button); never auto-shown on Overview.
     const showKpis = tab > 0 && kpiOpen;
+    const isRomRig = /^ROM-100-(I|II)$/i.test(String(id || ''));
+    const activeTabs = isRomRig ? ROM_HMI_TABS : HMI_TABS;
+    const activeTab = activeTabs[tab] || activeTabs[0];
+    const ActiveTab = activeTab.el;
+    const activeTabKey = activeTab.key;
     return (
         <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <Box sx={{ flex: '0 0 auto' }}>
                 <EdgeTwinTopBar rig={rig} onBack={() => nav('/')} showKpiToggle={tab > 0} kpiOpen={kpiOpen} onToggleKpis={() => setKpiOpen((o) => !o)} />
-                <RigStatusRow rig={rig} tab={tab} onTabChange={setTab} />
+                <RigStatusRow rig={rig} tab={tab} onTabChange={setTab} tabs={activeTabs} />
 
                 {showKpis && (
                     <Grid container spacing={1} mb={0.5}>
@@ -448,16 +471,19 @@ export default function RigDetail() {
                 and the HMI mirror panels. */}
             <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <RigDataProvider rigId={id}>
-                <ErrorBoundary key={HMI_TABS[tab].key} label="This panel">
-                    {React.createElement(HMI_TABS[tab].el, {
-                        rigId: id,
-                        rig,
-                        onTabChange: (key) => {
-                            const nextTab = HMI_TABS.findIndex((item) => item.key === key);
-                            if (nextTab >= 0) setTab(nextTab);
-                        },
-                    })}
-                </ErrorBoundary>
+                <Suspense fallback={<Typography sx={{ p: 3 }} color="text.secondary">Loading page...</Typography>}>
+                    <ErrorBoundary key={activeTabKey} label="This panel">
+                        {React.createElement(ActiveTab, {
+                            rigId: id,
+                            rig,
+                            page: activeTab,
+                            onTabChange: (key) => {
+                                const nextTab = activeTabs.findIndex((item) => item.key === key);
+                                if (nextTab >= 0) setTab(nextTab);
+                            },
+                        })}
+                    </ErrorBoundary>
+                </Suspense>
             </RigDataProvider>
             </Box>
         </Box>

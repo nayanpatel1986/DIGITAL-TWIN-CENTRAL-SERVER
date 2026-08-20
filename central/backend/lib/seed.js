@@ -1,7 +1,7 @@
 'use strict';
 // Idempotent seed for a demonstrable fleet: a 50-rig registry distributed across
-// ONGC's pan-India Asset units at varied rollout stages (proposal Â§6.2 rig master,
-// Â§8 stage-gate plan), the standard tag dictionary, default portal users, and Â§7
+// ONGC's pan-India Asset units at varied rollout stages (proposal §6.2 rig master,
+// §8 stage-gate plan), the standard tag dictionary, default portal users, and §7
 // value-realization KPIs.
 const { query } = require('./db');
 const { hash } = require('./auth');
@@ -37,8 +37,8 @@ const ASSET_UNITS = [
 ];
 const UNIT_BY_NAME = Object.fromEntries(ASSET_UNITS.map((u) => [u[0], u]));
 
-// Assign each rig (1..50) to an Asset unit. The first ~14 rigs â€” the ones the
-// fleet-sim streams live â€” are spread across a handful of units (Ankleshwar,
+// Assign each rig (1..50) to an Asset unit. The first ~14 rigs — the ones the
+// fleet-sim streams live — are spread across a handful of units (Ankleshwar,
 // Mumbai High, Assam, Rajahmundry/KG, Mehsana) so the India map shows live dots
 // in multiple regions. The remainder are distributed round-robin so every unit is
 // represented.
@@ -56,7 +56,7 @@ function unitFor(n) {
     return ASSET_UNITS[(n - 1) % ASSET_UNITS.length];
 }
 
-// Deterministic small jitter (Â±~0.25Â°) around an Asset centroid so each unit reads
+// Deterministic small jitter (±~0.25°) around an Asset centroid so each unit reads
 // as a cluster of rigs rather than a single overlapping dot.
 function jitter(n, salt) {
     const s = Math.sin(n * 12.9898 + salt * 78.233) * 43758.5453;
@@ -78,7 +78,7 @@ async function seedRigs() {
         const name = `AHWR-50-${n}`;
         const p = plan(n);
         const [assetUnit, field, baseLat, baseLon] = unitFor(n);
-        // Cluster near the unit centroid with deterministic Â±0.25Â° jitter.
+        // Cluster near the unit centroid with deterministic ±0.25° jitter.
         const lat = baseLat + jitter(n, 1);
         const lon = baseLon + jitter(n, 2);
         await query(
@@ -93,6 +93,30 @@ async function seedRigs() {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT (rig_id) DO NOTHING`,
             [rigId, p.gate, p.commissioning, p.site, p.sec, p.adopt, p.ver, p.wave]);
+    }
+}
+
+async function seedRomRigs() {
+    const romRigs = [
+        ['ROM-100-I', 'ROM-100-I'],
+        ['ROM-100-II', 'ROM-100-II'],
+    ];
+    for (const [rigId, name] of romRigs) {
+        await query(
+            `INSERT INTO rigs (rig_id, name, section, asset_unit, field, latitude, longitude, commissioned_at, status, schema_version)
+             VALUES ($1,$2,'ROM','Ankleshwar','ankleshwar',21.63,73.01,NULL,'pending','romii-edge-v1')
+             ON CONFLICT (rig_id) DO UPDATE SET
+               name = EXCLUDED.name,
+               section = EXCLUDED.section,
+               asset_unit = EXCLUDED.asset_unit,
+               field = EXCLUDED.field,
+               schema_version = EXCLUDED.schema_version`,
+            [rigId, name]);
+        await query(
+            `INSERT INTO deployment_status (rig_id, gate, commissioning, site_ready, security_review, adoption_pct, edge_version, wave)
+             VALUES ($1,'discovery','in_progress',true,true,0,'romii-edge-v1',1)
+             ON CONFLICT (rig_id) DO NOTHING`,
+            [rigId]);
     }
 }
 
@@ -144,7 +168,7 @@ async function seedValueMetrics() {
     if (rows[0].c > 0) return;
     const vm = [
         ['NPT % per AHWR', 'Operations', 14, 11.5, 12.8, '%', '24-month'],
-        ['Job cycle time (rig-upâ†’down)', 'Operations', 100, 87, 94, 'index', '24-month'],
+        ['Job cycle time (rig-up→down)', 'Operations', 100, 87, 94, 'index', '24-month'],
         ['HPU breakdowns during ops', 'Reliability', 100, 70, 82, 'index', '24-month'],
         ['PM compliance', 'Reliability', 71, 95, 88, '%', '24-month'],
         ['Manual reporting effort', 'Efficiency', 100, 30, 41, 'index', '24-month'],
@@ -161,12 +185,12 @@ async function seedValueMetrics() {
 async function seedGovernanceExtras() {
     const { rows } = await query('SELECT count(*)::int AS c FROM escalations');
     if (rows[0].c === 0) {
-        // Each demo escalation references a specific rig â€” guard with WHERE EXISTS so a
+        // Each demo escalation references a specific rig — guard with WHERE EXISTS so a
         // small fleet (e.g. a 3-edge pilot with FLEET_SIZE < 33) doesn't hit the
         // escalations_rig_id_fkey FK and abort seeding. Same pattern as the wells/
         // maintenance seeds below. Escalations for rigs outside the fleet are skipped.
         const escalations = [
-            ['AHWR-50-21', 'Cellular link unstable â€” sync lag > 10 min during peak', 'high', 'open', 'Instrumentation', 'Dual-SIM failover not provisioned; VSAT survey requested'],
+            ['AHWR-50-21', 'Cellular link unstable — sync lag > 10 min during peak', 'high', 'open', 'Instrumentation', 'Dual-SIM failover not provisioned; VSAT survey requested'],
             ['AHWR-50-28', 'PLC tag access pending vendor approval', 'medium', 'in_progress', 'Asset OT', 'Read-only tap design submitted for security review'],
             ['AHWR-50-33', 'Panel temperature alarms during commissioning', 'low', 'open', 'Site team', 'Ventilation kit dispatched'],
         ];
@@ -180,12 +204,12 @@ async function seedGovernanceExtras() {
     const d = await query('SELECT count(*)::int AS c FROM decisions');
     if (d.rows[0].c === 0) {
         await query(`INSERT INTO decisions (title, detail, author) VALUES
-            ('Adopt TimescaleDB as canonical central store','Ratified per architecture review; continuous aggregates for 1sâ†’1mâ†’1h rollups','Architecture Board'),
+            ('Adopt TimescaleDB as canonical central store','Ratified per architecture review; continuous aggregates for 1s→1m→1h rollups','Architecture Board'),
             ('Standard edge kit ratified for fleet','Single BoQ prevents fragmented parallel development across rigs','Instrumentation Section')`);
     }
 }
 
-// Maintenance & Reliability sample records (audit #7 / proposal Â§6.1). Seeded
+// Maintenance & Reliability sample records (audit #7 / proposal §6.1). Seeded
 // against commissioned rigs so the PM-compliance/overdue/breakdown KPIs read as a
 // live module rather than the static governance value-realization figures.
 async function seedMaintenance() {
@@ -193,7 +217,7 @@ async function seedMaintenance() {
     // maintenance_record table has not been applied yet (defensive, idempotent).
     const reg = await query("SELECT to_regclass('public.maintenance_record') AS t");
     if (!reg.rows[0] || !reg.rows[0].t) {
-        console.warn('Seed: maintenance_record table not present yet â€” skipping maintenance seed.');
+        console.warn('Seed: maintenance_record table not present yet — skipping maintenance seed.');
         return;
     }
     const { rows } = await query('SELECT count(*)::int AS c FROM maintenance_record');
@@ -241,7 +265,7 @@ async function seedNotificationChannels() {
 }
 
 // ---------------------------------------------------------------------
-// Well management seed (WITSML-inspired; proposal Â§6.1 well drill-down).
+// Well management seed (WITSML-inspired; proposal §6.1 well drill-down).
 // 1) For each STREAMING rig, seed its CURRENT well under the rig's sim job name
 //    (well_id = base job name, type/status 'workover', asset/field/coords copied
 //    from the rig, current_rig_id = rig). Runs accrue at runtime from trackRun.
@@ -250,7 +274,7 @@ async function seedNotificationChannels() {
 // Idempotent: ON CONFLICT DO NOTHING (and trackRun owns current_rig_id at runtime).
 // ---------------------------------------------------------------------
 
-// Base sim job name for rig n â€” MUST match fleet-sim/sim.js (the base of its
+// Base sim job name for rig n — MUST match fleet-sim/sim.js (the base of its
 // 3-well rotation set). The rotating siblings are created at runtime by trackRun.
 function baseJobFor(n) { return `GS-${10 + n}#${3 + (n % 5)}`; }
 
@@ -259,7 +283,7 @@ async function seedWells() {
     // not been applied yet (defensive, idempotent).
     const reg = await query("SELECT to_regclass('public.wells') AS t");
     if (!reg.rows[0] || !reg.rows[0].t) {
-        console.warn('Seed: wells table not present yet â€” skipping well seed.');
+        console.warn('Seed: wells table not present yet — skipping well seed.');
         return;
     }
 
@@ -334,6 +358,7 @@ async function seedWells() {
 
 async function seedAll() {
     await seedRigs();
+    await seedRomRigs();
     await seedTags();
     await seedUsers();
     await seedValueMetrics();

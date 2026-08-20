@@ -37,3 +37,6 @@ Thumbs.db
 # Generated offline transfer package
 AHWR_CENTRAL_OFFLINE_PACKAGE/
 
+
+CRMS-central-image-transfer-*/
+offline-image-transfer-*/

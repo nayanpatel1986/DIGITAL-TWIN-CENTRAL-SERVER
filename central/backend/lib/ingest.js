@@ -3,7 +3,7 @@
 // rig-edge sync agent (backend/lib/sync.js) in their native contract:
 //
 //   { seq, deviceId, schemaVersion, createdAt,
-//     channels: [{ ts, values: { "measurement.field": number } }],
+//     channels: [{ ts, values: { "measurement.field": number } }], or ROM-II flat [{ ts, metric, value }],
 //     events:   [{ ts, type, payload }] }
 //
 // Writes telemetry to the TimescaleDB hypertable, events/connections to their
@@ -80,17 +80,25 @@ function authorizeKnown(rig, token) {
     return ALLOW_OPEN_INGEST;
 }
 
+function channelValues(snap) {
+    if (!snap || typeof snap !== 'object') return null;
+    if (snap.values && typeof snap.values === 'object' && !Array.isArray(snap.values)) return snap.values;
+    if (snap.metric != null && snap.value != null) return { [String(snap.metric)]: snap.value };
+    return null;
+}
+
 // Bulk-insert telemetry rows with a single UNNEST'd statement. Idempotent on
-// replay via ON CONFLICT DO NOTHING keyed on (rig_id, metric, ts) — the SCHEMA
+// replay via ON CONFLICT DO NOTHING keyed on (rig_id, metric, ts) - the SCHEMA
 // agent provides the matching unique index (audit #4).
 async function insertTelemetry(client, rigId, channels) {
     const ts = [], metric = [], value = [];
     for (const snap of channels) {
-        if (!snap || !snap.values) continue;
+        const values = channelValues(snap);
+        if (!values) continue;
         // Bad/missing channel ts -> use now() (skip-bad-channel semantics: we keep
         // the channel but stamp it now rather than failing the batch). (audit #11)
         const t = coerceTsIso(snap.ts) || new Date().toISOString();
-        for (const [m, v] of Object.entries(snap.values)) {
+        for (const [m, v] of Object.entries(values)) {
             const n = Number(v);
             if (!Number.isFinite(n)) continue;
             ts.push(t); metric.push(m); value.push(n);
@@ -112,10 +120,16 @@ async function insertTelemetry(client, rigId, channels) {
 function latestSnapshot(channels) {
     let best = null, bestMs = -Infinity;
     for (const snap of channels || []) {
-        if (!snap || !snap.values) continue;
+        const values = channelValues(snap);
+        if (!values) continue;
         const ms = tsMillis(snap.ts);
         const m = Number.isFinite(ms) ? ms : -Infinity;
-        if (!best || m >= bestMs) { best = snap; bestMs = m; }
+        if (!best || m > bestMs) {
+            best = { ...snap, values: { ...values } };
+            bestMs = m;
+        } else if (m === bestMs) {
+            best.values = { ...best.values, ...values };
+        }
     }
     return best;
 }
@@ -164,7 +178,7 @@ function isWellMetric(metric) {
 }
 
 function findWellNameInSnapshot(snap) {
-    const values = snap && snap.values;
+    const values = channelValues(snap);
     if (!values || typeof values !== 'object') return '';
     const keys = [
         'wellName', 'well_name', 'well.name', 'well', 'wellId', 'well_id',
@@ -284,7 +298,7 @@ function findWellPayloadInBatch(batch, channels) {
     for (const snap of channels || []) {
         const fromSnap = findWellPayloadInSource(snap);
         if (fromSnap) return fromSnap;
-        const fromValues = findWellPayloadInSource(snap && snap.values);
+        const fromValues = findWellPayloadInSource(channelValues(snap));
         if (fromValues) return fromValues;
     }
     return null;
@@ -530,11 +544,12 @@ async function ingestBatch({ rigId, token, schemaVersion }, batch) {
             // snapshot's ts under the reserved __ts key, merged into the cache.
             const snapTsIso = coerceTsIso(snap.ts) || new Date().toISOString();
             const tsMap = {};
-            for (const m of Object.keys(snap.values)) tsMap[m] = snapTsIso;
+            const snapValues = channelValues(snap) || {};
+            for (const m of Object.keys(snapValues)) tsMap[m] = snapTsIso;
             // Insert values already carrying the reserved __ts map so per-tag age is
             // available from the very first batch (audit #22); on conflict, merge
             // both the values and the __ts map so a frozen tag keeps its old ts.
-            const insertValues = { ...snap.values, [TS_KEY]: tsMap };
+            const insertValues = { ...snapValues, [TS_KEY]: tsMap };
             await client.query(
                 `INSERT INTO rig_latest (rig_id, ts, values)
                  VALUES ($1, $2, $3::jsonb)
@@ -573,11 +588,10 @@ async function ingestBatch({ rigId, token, schemaVersion }, batch) {
         const receivedTs = Date.now();
         const latestMs = snap ? tsMillis(snap.ts) : NaN;
         const createdMs = tsMillis(batch.createdAt);
-        // Dashboard freshness must follow the snapshot timestamp, not only the
-        // central receive time. Otherwise an edge can keep replaying stale PLC
-        // values and the fleet view will incorrectly show the rig as online.
+        // Dashboard freshness follows the latest snapshot timestamp when present,
+        // so replayed stale PLC values do not make the fleet view look live.
         const latestTs = Number.isFinite(latestMs) ? latestMs : (Number.isFinite(createdMs) ? createdMs : receivedTs);
-        const presentMetrics = snap ? Object.keys(snap.values) : [];
+        const presentMetrics = snap ? Object.keys(channelValues(snap) || {}) : [];
         const health = computeHealth({ latestTs, presentMetrics });
 
         // Compose rollup update. Telemetry health/count changes only when this
